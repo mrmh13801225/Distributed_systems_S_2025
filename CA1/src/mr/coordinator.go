@@ -156,6 +156,42 @@ func (c *Coordinator) AskForTask(req *MessageSend, reply *MessageReply) error {
 	return nil
 }
 
+func (c *Coordinator) NoticeResult(req *MessageSend, reply *MessageReply) error {
+	if req.MsgType == MapSuccess {
+		c.muMap.Lock()
+		for _, v := range c.MapTasks {
+			if v.TaskId == req.TaskID {
+				v.Status = finished
+				c.muMap.Unlock()
+				return nil
+			}
+		}
+		c.muMap.Unlock()
+	} else if req.MsgType == ReduceSuccess {
+		c.muReduce.Lock()
+		c.ReduceTasks[req.TaskID].Status = finished
+		c.muReduce.Unlock()
+		return nil
+	} else if req.MsgType == MapFailed {
+		c.muMap.Lock()
+		for _, v := range c.MapTasks {
+			if v.TaskId == req.TaskID && v.Status == running {
+				v.Status = failed
+				c.muMap.Unlock()
+				return nil
+			}
+		}
+		c.muMap.Unlock()
+	} else if req.MsgType == ReduceFailed {
+		c.muReduce.Lock()
+		if c.ReduceTasks[req.TaskID].Status == running {
+			c.ReduceTasks[req.TaskID].Status = failed
+		}
+		c.muReduce.Unlock()
+		return nil
+	}
+	return nil
+}
 
 //
 // start a thread that listens for RPCs from worker.go

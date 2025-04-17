@@ -31,8 +31,13 @@ type ReduceTaskInfo struct {
 }
 
 type Coordinator struct {
-	// Your definitions here.
-
+	NReduce       int                     
+	MapTasks      map[string]*MapTaskInfo 
+	MapSuccess    bool                   
+	muMap         sync.Mutex              
+	ReduceTasks   []*ReduceTaskInfo       
+	ReduceSuccess bool                   
+	muReduce      sync.Mutex              
 }
 
 // Your code here -- RPC handlers for the worker to call.

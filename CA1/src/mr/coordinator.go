@@ -10,6 +10,25 @@ import (
 	"time"
 )
 
+type taskStatus int
+
+const (
+	idle     taskStatus = iota 
+	running                   
+	finished                  
+	failed                     
+)
+
+type MapTaskInfo struct {
+	TaskId    int       
+	Status    taskStatus 
+	StartTime int64  
+}
+
+type ReduceTaskInfo struct {
+	Status    taskStatus 
+	StartTime int64      
+}
 
 type Coordinator struct {
 	// Your definitions here.

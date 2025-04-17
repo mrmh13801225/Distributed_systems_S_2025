@@ -214,12 +214,22 @@ func (c *Coordinator) server() {
 // if the entire job has finished.
 //
 func (c *Coordinator) Done() bool {
-	ret := false
-
 	// Your code here.
+	for _, taskinfo := range c.MapTasks {
+		if taskinfo.Status != finished {
+			return false
+		}
+	}
 
+	for _, taskinfo := range c.ReduceTasks {
+		if taskinfo.Status != finished {
+			return false
+		}
+	}
 
-	return ret
+	time.Sleep(time.Second * 3)
+
+	return true
 }
 
 //

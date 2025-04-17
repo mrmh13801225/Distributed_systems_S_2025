@@ -40,6 +40,21 @@ type Coordinator struct {
 	muReduce      sync.Mutex              
 }
 
+
+func (c *Coordinator) initTask(files []string) {
+	for idx, fileName := range files {
+		c.MapTasks[fileName] = &MapTaskInfo{
+			TaskId: idx,
+			Status: idle,
+		}
+	}
+	for idx := range c.ReduceTasks {
+		c.ReduceTasks[idx] = &ReduceTaskInfo{
+			Status: idle,
+		}
+	}
+}
+
 // Your code here -- RPC handlers for the worker to call.
 
 //
@@ -88,10 +103,13 @@ func (c *Coordinator) Done() bool {
 // nReduce is the number of reduce tasks to use.
 //
 func MakeCoordinator(files []string, nReduce int) *Coordinator {
-	c := Coordinator{}
+	c := Coordinator{
+        NReduce:     nReduce,
+        MapTasks:    make(map[string]*MapTaskInfo),
+        ReduceTasks: make([]*ReduceTaskInfo, nReduce),
+    }
 
-	// Your code here.
-
+	c.initTask(files)
 
 	c.server()
 	return &c

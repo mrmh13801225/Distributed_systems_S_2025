@@ -156,41 +156,74 @@ func (c *Coordinator) AskForTask(req *MessageSend, reply *MessageReply) error {
 	return nil
 }
 
-func (c *Coordinator) NoticeResult(req *MessageSend, reply *MessageReply) error {
-	if req.MsgType == MapSuccess {
-		c.muMap.Lock()
-		for _, v := range c.MapTasks {
-			if v.TaskId == req.TaskID {
-				v.Status = finished
-				c.muMap.Unlock()
-				return nil
-			}
+type NoticeResultStrategy interface {
+	Handle(c *Coordinator, req *MessageSend) error
+}
+
+type MapSuccessStrategy struct{}
+
+func (s *MapSuccessStrategy) Handle(c *Coordinator, req *MessageSend) error {
+	c.muMap.Lock()
+	defer c.muMap.Unlock()
+	for _, v := range c.MapTasks {
+		if v.TaskId == req.TaskID {
+			v.Status = finished
+			return nil
 		}
-		c.muMap.Unlock()
-	} else if req.MsgType == ReduceSuccess {
-		c.muReduce.Lock()
-		c.ReduceTasks[req.TaskID].Status = finished
-		c.muReduce.Unlock()
-		return nil
-	} else if req.MsgType == MapFailed {
-		c.muMap.Lock()
-		for _, v := range c.MapTasks {
-			if v.TaskId == req.TaskID && v.Status == running {
-				v.Status = failed
-				c.muMap.Unlock()
-				return nil
-			}
-		}
-		c.muMap.Unlock()
-	} else if req.MsgType == ReduceFailed {
-		c.muReduce.Lock()
-		if c.ReduceTasks[req.TaskID].Status == running {
-			c.ReduceTasks[req.TaskID].Status = failed
-		}
-		c.muReduce.Unlock()
-		return nil
 	}
 	return nil
+}
+
+type ReduceSuccessStrategy struct{}
+
+func (s *ReduceSuccessStrategy) Handle(c *Coordinator, req *MessageSend) error {
+	c.muReduce.Lock()
+	defer c.muReduce.Unlock()
+	if req.TaskID < len(c.ReduceTasks) {
+		c.ReduceTasks[req.TaskID].Status = finished
+	}
+	return nil
+}
+
+type MapFailedStrategy struct{}
+
+func (s *MapFailedStrategy) Handle(c *Coordinator, req *MessageSend) error {
+	c.muMap.Lock()
+	defer c.muMap.Unlock()
+	for _, v := range c.MapTasks {
+		if v.TaskId == req.TaskID && v.Status == running {
+			v.Status = failed
+			return nil
+		}
+	}
+	return nil
+}
+
+
+type ReduceFailedStrategy struct{}
+
+func (s *ReduceFailedStrategy) Handle(c *Coordinator, req *MessageSend) error {
+	c.muReduce.Lock()
+	defer c.muReduce.Unlock()
+	if req.TaskID < len(c.ReduceTasks) && c.ReduceTasks[req.TaskID].Status == running {
+		c.ReduceTasks[req.TaskID].Status = failed
+	}
+	return nil
+}
+
+var strategies = map[MsgType]NoticeResultStrategy{
+	MapSuccess:    &MapSuccessStrategy{},
+	ReduceSuccess: &ReduceSuccessStrategy{},
+	MapFailed:     &MapFailedStrategy{},
+	ReduceFailed:  &ReduceFailedStrategy{},
+}
+
+func (c *Coordinator) NoticeResult(req *MessageSend, reply *MessageReply) error {
+	strategy, ok := strategies[req.MsgType]
+	if !ok {
+		return nil 
+	}
+	return strategy.Handle(c, req)
 }
 
 //

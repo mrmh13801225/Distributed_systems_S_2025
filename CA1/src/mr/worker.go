@@ -53,6 +53,80 @@ func Worker(mapf func(string, string) []KeyValue,
 
 }
 
+
+func readFileContent(taskName string) ([]byte, error) {
+	file, err := os.Open(taskName)
+	if err != nil {
+		return nil, err
+	}
+	defer file.Close()
+
+	content, err := io.ReadAll(file)
+	if err != nil {
+		return nil, err
+	}
+	return content, nil
+}
+
+func processKVsToTempFiles(kva []KeyValue, nReduce int) ([]*os.File, error) {
+	tempFiles := make([]*os.File, nReduce)
+	encoders := make([]*json.Encoder, nReduce)
+
+	for _, kv := range kva {
+		redId := ihash(kv.Key) % nReduce
+		if encoders[redId] == nil {
+			tempFile, err := ioutil.TempFile("", fmt.Sprintf("mr-map-tmp-%d", redId))
+			if err != nil {
+				return nil, err
+			}
+			tempFiles[redId] = tempFile
+			encoders[redId] = json.NewEncoder(tempFile)
+		}
+		if err := encoders[redId].Encode(&kv); err != nil {
+			return nil, err
+		}
+	}
+
+	return tempFiles, nil
+}
+
+func renameTempFiles(tempFiles []*os.File, taskID int) error {
+	for i, file := range tempFiles {
+		if file != nil {
+			fileName := file.Name()
+			if err := file.Close(); err != nil {
+				return err
+			}
+			newName := fmt.Sprintf("mr-out-%d-%d", taskID, i)
+			if err := os.Rename(fileName, newName); err != nil {
+				return err
+			}
+		}
+	}
+	return nil
+}
+
+func HandleMapTask(reply *MessageReply, mapf func(string, string) []KeyValue) error {
+	content, err := readFileContent(reply.TaskName)
+	if err != nil {
+		return err
+	}
+
+	kva := mapf(reply.TaskName, string(content))
+	sort.Sort(ByKey(kva))
+
+	tempFiles, err := processKVsToTempFiles(kva, reply.NReduce)
+	if err != nil {
+		return err
+	}
+
+	if err := renameTempFiles(tempFiles, reply.TaskID); err != nil {
+		return err
+	}
+
+	return nil
+}
+
 //
 // example function to show how to make an RPC call to the coordinator.
 //

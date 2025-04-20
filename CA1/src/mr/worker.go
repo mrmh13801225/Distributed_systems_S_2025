@@ -10,7 +10,6 @@ import (
 	"os"
 	"sort"
 	"strconv"
-	"time"
 	"regexp"
 	"path/filepath"
 	"log"
@@ -266,28 +265,33 @@ func HandleReduceTask(reply *MessageReply, reducef func(string, []string) string
 //
 // the RPC argument and reply types are defined in rpc.go.
 //
-func CallExample() {
 
-	// declare an argument structure.
-	args := ExampleArgs{}
-
-	// fill in the argument(s).
-	args.X = 99
-
-	// declare a reply structure.
-	reply := ExampleReply{}
-
-	// send the RPC request, wait for the reply.
-	// the "Coordinator.Example" tells the
-	// receiving server that we'd like to call
-	// the Example() method of struct Coordinator.
-	ok := call("Coordinator.Example", &args, &reply)
-	if ok {
-		// reply.Y should be 100.
-		fmt.Printf("reply.Y %v\n", reply.Y)
-	} else {
-		fmt.Printf("call failed!\n")
+func CallForTask() *MessageReply {
+	args := MessageSend{
+		MsgType: AskForTask,
 	}
+
+	reply := MessageReply{}
+
+	err := call("Coordinator.AskForTask", &args, &reply)
+	if err == nil {
+		return &reply
+	} else {
+		return nil
+	}
+}
+
+func CallForReportStatus(succesType MsgType, taskID int) error {
+
+	args := MessageSend{
+		MsgType: succesType,
+		TaskID:  taskID,
+	}
+
+
+	err := call("Coordinator.NoticeResult", &args, nil)
+
+	return err
 }
 
 //
@@ -301,6 +305,7 @@ func call(rpcname string, args interface{}, reply interface{}) bool {
 	c, err := rpc.DialHTTP("unix", sockname)
 	if err != nil {
 		log.Fatal("dialing:", err)
+		os.Exit(-1)
 	}
 	defer c.Close()
 

@@ -11,6 +11,9 @@ import (
 	"sort"
 	"strconv"
 	"time"
+	"regexp"
+	"path/filepath"
+	"log"
 )
 
 
@@ -125,6 +128,137 @@ func HandleMapTask(reply *MessageReply, mapf func(string, string) []KeyValue) er
 	}
 
 	return nil
+}
+
+func ReadSpecificFile(targetNumber int, path string) (fileList []*os.File, err error) {
+	pattern := fmt.Sprintf(`^mr-out-\d+-%d$`, targetNumber)
+	regex, err := regexp.Compile(pattern)
+	if err != nil {
+		return nil, err
+	}
+
+	files, err := os.ReadDir(path)
+	if err != nil {
+		return nil, err
+	}
+
+	for _, fileEntry := range files {
+		if fileEntry.IsDir() {
+			continue 
+		}
+		fileName := fileEntry.Name()
+		if regex.MatchString(fileName) {
+			filePath := filepath.Join(path, fileEntry.Name())
+			file, err := os.Open(filePath)
+			if err != nil {
+				log.Fatalf("cannot open %v", filePath)
+				for _, oFile := range fileList {
+					oFile.Close()
+				}
+				return nil, err
+			}
+			fileList = append(fileList, file)
+		}
+	}
+	return fileList, nil
+}
+
+func decodeFileToMap(file *os.File, kvs map[string][]string) error {
+	dec := json.NewDecoder(file)
+	for {
+		var kv KeyValue
+		if err := dec.Decode(&kv); err != nil {
+			break 
+		}
+		kvs[kv.Key] = append(kvs[kv.Key], kv.Value)
+	}
+	return nil
+}
+
+func readIntermediateFiles(reduceID int, dir string) (map[string][]string, error) {
+	fileList, err := ReadSpecificFile(reduceID, dir)
+	if err != nil {
+		return nil, err
+	}
+
+	kvs := make(map[string][]string)
+	for _, file := range fileList {
+		if err := decodeFileToMap(file, kvs); err != nil {
+			file.Close()
+			return nil, err
+		}
+		file.Close()
+	}
+	return kvs, nil
+}
+
+func processGroupedData(kvs map[string][]string, reducef func(string, []string) string, taskID int) error {
+	var keys []string
+	for k := range kvs {
+		keys = append(keys, k)
+	}
+	sort.Strings(keys)
+
+	oname := "mr-out-" + strconv.Itoa(taskID)
+	ofile, err := os.Create(oname)
+	if err != nil {
+		return err
+	}
+	defer ofile.Close()
+
+	for _, key := range keys {
+		output := reducef(key, kvs[key])
+		_, err := fmt.Fprintf(ofile, "%v %v\n", key, output)
+		if err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+func DelFileByReduceId(targetNumber int, path string) error {
+	pattern := fmt.Sprintf(`^mr-out-\d+-%d$`, targetNumber)
+	regex, err := regexp.Compile(pattern)
+	if err != nil {
+		return err
+	}
+
+	files, err := os.ReadDir(path)
+	if err != nil {
+		return err
+	}
+
+	for _, file := range files {
+		if file.IsDir() {
+			continue 
+		}
+		fileName := file.Name()
+		if regex.MatchString(fileName) {
+			filePath := filepath.Join(path, file.Name())
+			err := os.Remove(filePath)
+			if err != nil {
+				return err
+			}
+		}
+	}
+	return nil
+}
+
+func deleteIntermediateFiles(reduceID int, dir string) error {
+	return DelFileByReduceId(reduceID, dir)
+}
+
+func HandleReduceTask(reply *MessageReply, reducef func(string, []string) string) error {
+	kvs, err := readIntermediateFiles(reply.TaskID, "./")
+	if err != nil {
+		return err
+	}
+
+	if err := processGroupedData(kvs, reducef, reply.TaskID); err != nil {
+		return err
+	}
+
+	return deleteIntermediateFiles(reply.TaskID, "./")
 }
 
 //

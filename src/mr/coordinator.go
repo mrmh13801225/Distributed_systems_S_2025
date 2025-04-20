@@ -13,31 +13,31 @@ import (
 type taskStatus int
 
 const (
-	idle     taskStatus = iota 
-	running                   
-	finished                  
-	failed                     
+	idle     taskStatus = iota
+	running
+	finished
+	failed
 )
 
 type MapTaskInfo struct {
-	TaskId    int       
-	Status    taskStatus 
-	StartTime int64  
+	TaskId    int
+	Status    taskStatus
+	StartTime int64
 }
 
 type ReduceTaskInfo struct {
-	Status    taskStatus 
-	StartTime int64      
+	Status    taskStatus
+	StartTime int64
 }
 
 type Coordinator struct {
-	NReduce       int                     
-	MapTasks      map[string]*MapTaskInfo 
-	MapSuccess    bool                   
-	muMap         sync.Mutex              
-	ReduceTasks   []*ReduceTaskInfo       
-	ReduceSuccess bool                   
-	muReduce      sync.Mutex              
+	NReduce       int
+	MapTasks      map[string]*MapTaskInfo
+	MapSuccess    bool
+	muMap         sync.Mutex
+	ReduceTasks   []*ReduceTaskInfo
+	ReduceSuccess bool
+	muReduce      sync.Mutex
 }
 
 
@@ -221,7 +221,7 @@ var strategies = map[MsgType]NoticeResultStrategy{
 func (c *Coordinator) NoticeResult(req *MessageSend, reply *MessageReply) error {
 	strategy, ok := strategies[req.MsgType]
 	if !ok {
-		return nil 
+		return nil
 	}
 	return strategy.Handle(c, req)
 }

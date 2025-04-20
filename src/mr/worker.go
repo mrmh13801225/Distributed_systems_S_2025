@@ -6,19 +6,17 @@ import (
 	"hash/fnv"
 	"io"
 	"io/ioutil"
+	"log"
 	"net/rpc"
 	"os"
+	"path/filepath"
+	"regexp"
 	"sort"
 	"strconv"
-	"regexp"
-	"path/filepath"
-	"log"
+	"time"
 )
 
-
-//
 // Map functions return a slice of KeyValue.
-//
 type KeyValue struct {
 	Key   string
 	Value string
@@ -31,30 +29,45 @@ func (a ByKey) Len() int           { return len(a) }
 func (a ByKey) Swap(i, j int)      { a[i], a[j] = a[j], a[i] }
 func (a ByKey) Less(i, j int) bool { return a[i].Key < a[j].Key }
 
-//
 // use ihash(key) % NReduce to choose the reduce
 // task number for each KeyValue emitted by Map.
-//
 func ihash(key string) int {
 	h := fnv.New32a()
 	h.Write([]byte(key))
 	return int(h.Sum32() & 0x7fffffff)
 }
 
-
-//
 // main/mrworker.go calls this function.
-//
 func Worker(mapf func(string, string) []KeyValue,
 	reducef func(string, []string) string) {
 
-	// Your worker implementation here.
+	for {
+		replyMsg := CallForTask()
 
-	// uncomment to send the Example RPC to the coordinator.
-	// CallExample()
+		switch replyMsg.MsgType {
+		case MapTaskAlloc:
+			err := HandleMapTask(replyMsg, mapf)
+			if err == nil {
+				_ = CallForReportStatus(MapSuccess, replyMsg.TaskID)
+			} else {
+				_ = CallForReportStatus(MapFailed, replyMsg.TaskID)
+			}
+		case ReduceTaskAlloc:
+			err := HandleReduceTask(replyMsg, reducef)
+			if err == nil {
+				_ = CallForReportStatus(ReduceSuccess, replyMsg.TaskID)
+			} else {
+				_ = CallForReportStatus(ReduceFailed, replyMsg.TaskID)
+			}
+		case Wait:
+			time.Sleep(time.Second * 10)
+		case Shutdown:
+			os.Exit(0)
+		}
+		time.Sleep(time.Second)
+	}
 
 }
-
 
 func readFileContent(taskName string) ([]byte, error) {
 	file, err := os.Open(taskName)
@@ -143,7 +156,7 @@ func ReadSpecificFile(targetNumber int, path string) (fileList []*os.File, err e
 
 	for _, fileEntry := range files {
 		if fileEntry.IsDir() {
-			continue 
+			continue
 		}
 		fileName := fileEntry.Name()
 		if regex.MatchString(fileName) {
@@ -167,7 +180,7 @@ func decodeFileToMap(file *os.File, kvs map[string][]string) error {
 	for {
 		var kv KeyValue
 		if err := dec.Decode(&kv); err != nil {
-			break 
+			break
 		}
 		kvs[kv.Key] = append(kvs[kv.Key], kv.Value)
 	}
@@ -229,7 +242,7 @@ func DelFileByReduceId(targetNumber int, path string) error {
 
 	for _, file := range files {
 		if file.IsDir() {
-			continue 
+			continue
 		}
 		fileName := file.Name()
 		if regex.MatchString(fileName) {
@@ -288,18 +301,15 @@ func CallForReportStatus(succesType MsgType, taskID int) error {
 		TaskID:  taskID,
 	}
 
-
 	err := call("Coordinator.NoticeResult", &args, nil)
 
 	return err
 }
 
-//
 // send an RPC request to the coordinator, wait for the response.
 // usually returns true.
 // returns false if something goes wrong.
-//
-func call(rpcname string, args interface{}, reply interface{}) bool {
+func call(rpcname string, args interface{}, reply interface{}) error {
 	// c, err := rpc.DialHTTP("tcp", "127.0.0.1"+":1234")
 	sockname := coordinatorSock()
 	c, err := rpc.DialHTTP("unix", sockname)
@@ -310,10 +320,9 @@ func call(rpcname string, args interface{}, reply interface{}) bool {
 	defer c.Close()
 
 	err = c.Call(rpcname, args, reply)
-	if err == nil {
-		return true
+	if err != nil {
+		fmt.Println(err)
 	}
 
-	fmt.Println(err)
-	return false
+	return err
 }

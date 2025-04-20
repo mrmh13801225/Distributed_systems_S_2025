@@ -13,7 +13,7 @@ import (
 type taskStatus int
 
 const (
-	idle     taskStatus = iota
+	idle taskStatus = iota
 	running
 	finished
 	failed
@@ -40,7 +40,6 @@ type Coordinator struct {
 	muReduce      sync.Mutex
 }
 
-
 func (c *Coordinator) initTask(files []string) {
 	for idx, fileName := range files {
 		c.MapTasks[fileName] = &MapTaskInfo{
@@ -57,103 +56,128 @@ func (c *Coordinator) initTask(files []string) {
 
 // Your code here -- RPC handlers for the worker to call.
 
-//
 // an example RPC handler.
 //
 // the RPC argument and reply types are defined in rpc.go.
-//
 func (c *Coordinator) AskForTask(req *MessageSend, reply *MessageReply) error {
 	if req.MsgType != AskForTask {
 		return BadMsgType
 	}
+
 	if !c.MapSuccess {
-
-		c.muMap.Lock()
-
-		count_map_success := 0
-		for fileName, taskinfo := range c.MapTasks {
-			alloc := false
-
-			if taskinfo.Status == idle || taskinfo.Status == failed {
-				alloc = true
-			} else if taskinfo.Status == running {
-				curTime := time.Now().Unix()
-				if curTime-taskinfo.StartTime > 10 {
-					taskinfo.StartTime = curTime
-					alloc = true
-				}
-			} else {
-				count_map_success++
-			}
-
-			if alloc {
-				reply.MsgType = MapTaskAlloc
-				reply.TaskName = fileName
-				reply.NReduce = c.NReduce
-				reply.TaskID = taskinfo.TaskId
-
-
-				taskinfo.Status = running
-				taskinfo.StartTime = time.Now().Unix()
-				c.muMap.Unlock()
-				return nil
-			}
+		allocated, successCount := c.tryAllocateMapTask(reply)
+		if allocated {
+			return nil
 		}
 
-		c.muMap.Unlock()
-
-		if count_map_success < len(c.MapTasks) {
+		if successCount < len(c.MapTasks) {
 			reply.MsgType = Wait
-			return nil
 		} else {
 			c.MapSuccess = true
 		}
+		return nil
 	}
 
 	if !c.ReduceSuccess {
-		c.muReduce.Lock()
-
-		count_reduce_success := 0
-		for idx, taskinfo := range c.ReduceTasks {
-			alloc := false
-			if taskinfo.Status == idle || taskinfo.Status == failed {
-				alloc = true
-			} else if taskinfo.Status == running {
-				curTime := time.Now().Unix()
-				if curTime-taskinfo.StartTime > 10 {
-					taskinfo.StartTime = curTime
-					alloc = true
-				}
-			} else {
-				count_reduce_success++
-			}
-
-			if alloc {
-				reply.MsgType = ReduceTaskAlloc
-				reply.TaskID = idx
-
-
-				taskinfo.Status = running
-				taskinfo.StartTime = time.Now().Unix()
-
-				c.muReduce.Unlock()
-				return nil
-			}
+		allocated, successCount := c.tryAllocateReduceTask(reply)
+		if allocated {
+			return nil
 		}
 
-		c.muReduce.Unlock()
-
-		if count_reduce_success < len(c.ReduceTasks) {
+		if successCount < len(c.ReduceTasks) {
 			reply.MsgType = Wait
-			return nil
 		} else {
 			c.ReduceSuccess = true
 		}
+		return nil
 	}
 
 	reply.MsgType = Shutdown
-
 	return nil
+}
+
+func (c *Coordinator) tryAllocateMapTask(reply *MessageReply) (bool, int) {
+	c.muMap.Lock()
+	defer c.muMap.Unlock()
+
+	successCount := 0
+	for fileName, taskInfo := range c.MapTasks {
+		alloc := shouldAllocateMapTask(taskInfo)
+
+		if alloc {
+			configureMapReply(reply, fileName, taskInfo, c.NReduce)
+			updateMapTaskStatus(taskInfo)
+			return true, successCount
+		}
+
+		if taskInfo.Status == finished {
+			successCount++
+		}
+	}
+	return false, successCount
+}
+
+func shouldAllocateMapTask(taskInfo *MapTaskInfo) bool {
+	if taskInfo.Status == idle || taskInfo.Status == failed {
+		return true
+	}
+	if taskInfo.Status == running && time.Now().Unix()-taskInfo.StartTime > 10 {
+		return true
+	}
+	return false
+}
+
+func configureMapReply(reply *MessageReply, fileName string, taskInfo *MapTaskInfo, nReduce int) {
+	reply.MsgType = MapTaskAlloc
+	reply.TaskName = fileName
+	reply.NReduce = nReduce
+	reply.TaskID = taskInfo.TaskId
+}
+
+func updateMapTaskStatus(taskInfo *MapTaskInfo) {
+	taskInfo.Status = running
+	taskInfo.StartTime = time.Now().Unix()
+}
+
+func (c *Coordinator) tryAllocateReduceTask(reply *MessageReply) (bool, int) {
+	c.muReduce.Lock()
+	defer c.muReduce.Unlock()
+
+	successCount := 0
+	for idx, taskInfo := range c.ReduceTasks {
+		alloc := shouldAllocateReduceTask(taskInfo)
+
+		if alloc {
+			configureReduceReply(reply, idx)
+			updateReduceTaskStatus(taskInfo)
+			return true, successCount
+		}
+
+		if taskInfo.Status == finished {
+			successCount++
+		}
+	}
+	return false, successCount
+}
+
+func shouldAllocateReduceTask(taskInfo *ReduceTaskInfo) bool {
+	if taskInfo.Status == idle || taskInfo.Status == failed {
+		return true
+	}
+	if taskInfo.Status == running && time.Now().Unix()-taskInfo.StartTime > 10 {
+		return true
+	}
+	return false
+}
+
+func configureReduceReply(reply *MessageReply, taskID int) {
+	reply.MsgType = ReduceTaskAlloc
+	reply.TaskID = taskID
+}
+
+func updateReduceTaskStatus(taskInfo *ReduceTaskInfo) {
+	taskInfo.Status = running
+	taskInfo.StartTime = time.Now().Unix()
 }
 
 type NoticeResultStrategy interface {
@@ -199,7 +223,6 @@ func (s *MapFailedStrategy) Handle(c *Coordinator, req *MessageSend) error {
 	return nil
 }
 
-
 type ReduceFailedStrategy struct{}
 
 func (s *ReduceFailedStrategy) Handle(c *Coordinator, req *MessageSend) error {
@@ -226,9 +249,7 @@ func (c *Coordinator) NoticeResult(req *MessageSend, reply *MessageReply) error 
 	return strategy.Handle(c, req)
 }
 
-//
 // start a thread that listens for RPCs from worker.go
-//
 func (c *Coordinator) server() {
 	rpc.Register(c)
 	rpc.HandleHTTP()
@@ -242,10 +263,8 @@ func (c *Coordinator) server() {
 	go http.Serve(l, nil)
 }
 
-//
 // main/mrcoordinator.go calls Done() periodically to find out
 // if the entire job has finished.
-//
 func (c *Coordinator) Done() bool {
 	// Your code here.
 	for _, taskinfo := range c.MapTasks {
@@ -265,17 +284,15 @@ func (c *Coordinator) Done() bool {
 	return true
 }
 
-//
 // create a Coordinator.
 // main/mrcoordinator.go calls this function.
 // nReduce is the number of reduce tasks to use.
-//
 func MakeCoordinator(files []string, nReduce int) *Coordinator {
 	c := Coordinator{
-        NReduce:     nReduce,
-        MapTasks:    make(map[string]*MapTaskInfo),
-        ReduceTasks: make([]*ReduceTaskInfo, nReduce),
-    }
+		NReduce:     nReduce,
+		MapTasks:    make(map[string]*MapTaskInfo),
+		ReduceTasks: make([]*ReduceTaskInfo, nReduce),
+	}
 
 	c.initTask(files)
 

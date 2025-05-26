@@ -39,7 +39,18 @@ func MakeKVServer() *KVServer {
 // Get returns the value and version for args.Key, if args.Key
 // exists. Otherwise, Get returns ErrNoKey.
 func (kv *KVServer) Get(args *rpc.GetArgs, reply *rpc.GetReply) {
-	// Your code here.
+	kv.mu.Lock()
+	defer kv.mu.Unlock()
+	
+	if value, ok := kv.kvStore[args.Key]; ok {
+		reply.Value = value
+		reply.Version = kv.versionStore[args.Key]
+		reply.Err = rpc.OK
+		DPrintf("Server: Get key: %s value: %s with version %d", args.Key, value, reply.Version)
+	} else {
+		reply.Err = rpc.ErrNoKey
+		DPrintf("Server: Get key: %s not found", args.Key)
+	}
 }
 
 // Update the value for a key if args.Version matches the version of
@@ -47,7 +58,6 @@ func (kv *KVServer) Get(args *rpc.GetArgs, reply *rpc.GetReply) {
 // If the key doesn't exist, Put installs the value if the
 // args.Version is 0, and returns ErrNoKey otherwise.
 func (kv *KVServer) Put(args *rpc.PutArgs, reply *rpc.PutReply) {
-	// Your code here.
 }
 
 // You can ignore Kill() for this lab

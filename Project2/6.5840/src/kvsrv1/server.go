@@ -21,7 +21,8 @@ func DPrintf(format string, a ...interface{}) (n int, err error) {
 
 type KVServer struct {
 	mu sync.Mutex
-
+	kvStore      map[string]string
+	versionStore map[string]rpc.Tversion
 	// Your definitions here.
 }
 

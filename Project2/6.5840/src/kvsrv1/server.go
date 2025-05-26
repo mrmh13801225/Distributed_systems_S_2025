@@ -27,7 +27,11 @@ type KVServer struct {
 }
 
 func MakeKVServer() *KVServer {
-	kv := &KVServer{}
+	kv := &KVServer{
+		mu:           sync.Mutex{},
+		kvStore:      make(map[string]string),
+		versionStore: make(map[string]rpc.Tversion),
+	}
 	// Your code here.
 	return kv
 }

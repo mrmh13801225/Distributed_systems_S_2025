@@ -58,6 +58,62 @@ func (kv *KVServer) Get(args *rpc.GetArgs, reply *rpc.GetReply) {
 // If the key doesn't exist, Put installs the value if the
 // args.Version is 0, and returns ErrNoKey otherwise.
 func (kv *KVServer) Put(args *rpc.PutArgs, reply *rpc.PutReply) {
+	kv.mu.Lock()
+	defer kv.mu.Unlock()
+
+	currentVersion, keyExists := kv.versionStore[args.Key]
+
+	if keyExists {
+		// Handle existing key
+		if err := kv.updateExistingKey(args, currentVersion); err != rpc.OK {
+			reply.Err = err
+			return
+		}
+	} else {
+		// Handle new key
+		if err := kv.createNewKey(args); err != rpc.OK {
+			reply.Err = err
+			return
+		}
+	}
+
+	reply.Err = rpc.OK
+}
+
+// updateExistingKey handles updating an existing key-value pair
+func (kv *KVServer) updateExistingKey(args *rpc.PutArgs, currentVersion rpc.Tversion) rpc.Err {
+	if args.Version != currentVersion {
+		DPrintf("Server: Put version mismatch for key: %s (expected: %d, got: %d)", 
+			args.Key, currentVersion, args.Version)
+		return rpc.ErrVersion
+	}
+
+	// Update value and increment version
+	kv.kvStore[args.Key] = args.Value
+	kv.versionStore[args.Key] = currentVersion + 1
+	
+	DPrintf("Server: Put updated key: %s to value: %s (version: %d -> %d)", 
+		args.Key, args.Value, currentVersion, currentVersion+1)
+	
+	return rpc.OK
+}
+
+// createNewKey handles creating a new key-value pair
+func (kv *KVServer) createNewKey(args *rpc.PutArgs) rpc.Err {
+	if args.Version != 0 {
+		DPrintf("Server: Put failed - key: %s doesn't exist, expected version 0, got: %d", 
+			args.Key, args.Version)
+		return rpc.ErrNoKey
+	}
+
+	// Create new key with version 1
+	kv.kvStore[args.Key] = args.Value
+	kv.versionStore[args.Key] = 1
+	
+	DPrintf("Server: Put created new key: %s with value: %s (version: 1)", 
+		args.Key, args.Value)
+	
+	return rpc.OK
 }
 
 // You can ignore Kill() for this lab

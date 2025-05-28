@@ -64,6 +64,19 @@ func (ck *Clerk) Get(key string) (string, rpc.Tversion, rpc.Err) {
 // must match the declared types of the RPC handler function's
 // arguments. Additionally, reply must be passed as a pointer.
 func (ck *Clerk) Put(key, value string, version rpc.Tversion) rpc.Err {
-	// You will have to modify this function.
-	return rpc.ErrNoKey
+	args := &rpc.PutArgs{Key: key, Value: value, Version: version}
+	reply := &rpc.PutReply{}
+
+	for retryCount := 0; ; retryCount++ {
+		ok := ck.clnt.Call(ck.server, "KVServer.Put", args, reply)
+		if !ok {
+			DPrintf("Client: network error, retrying")
+			time.Sleep(time.Duration(100*retryCount) * time.Millisecond)
+			continue
+		}
+		if retryCount == 0 {
+			return reply.Err
+		}
+		return rpc.ErrMaybe
+	}
 }

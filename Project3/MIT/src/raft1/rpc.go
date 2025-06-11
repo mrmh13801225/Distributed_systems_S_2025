@@ -39,7 +39,7 @@ func (rf *Raft) RequestVote(args *RequestVoteArgs, reply *RequestVoteReply) {
 	}
 
 	if args.Term > rf.currentTermID {
-		rf.convertToFollower(args.Term)
+		rf.becomeFollower(args.Term)
 	}
 
 	if rf.candidateLogUptodate(args) {
@@ -113,8 +113,8 @@ type AppendEntriesArgs struct {
 func (rf *Raft) genAppendEntriesArgs(server int) *AppendEntriesArgs {
 	args := &AppendEntriesArgs{
 		Term:         rf.currentTermID,
-		PrevLogIndex: rf.PrevLogIndex(server),
-		PrevLogTerm:  rf.PrevLogTerm(server),
+		PrevLogIndex: rf.prevLogIndex(server),
+		PrevLogTerm:  rf.prevLogTerm(server),
 		LeaderCommit: rf.commitIndex,
 	}
 
@@ -148,15 +148,14 @@ func (rf *Raft) AppendEntries(args *AppendEntriesArgs, reply *AppendEntriesReply
 	}
 
 	if args.Term > rf.currentTermID {
-		rf.convertToFollower(args.Term)
+		rf.becomeFollower(args.Term)
 	} else if args.Term == rf.currentTermID && rf.state == Candidate {
-		rf.convertToFollower(args.Term)
+		rf.becomeFollower(args.Term)
 	}
 
 	rf.electionTimerReset()
 
 	if args.PrevLogIndex < rf.raftLog.FirstIndex() {
-		rf.DPrintf("prev log index %d < first index %d\n", args.PrevLogIndex, rf.raftLog.FirstIndex())
 		return
 	}
 
@@ -201,7 +200,6 @@ func (rf *Raft) AppendEntries(args *AppendEntriesArgs, reply *AppendEntriesReply
 		if rf.commitIndex < newCommitIndex {
 			rf.commitIndex = newCommitIndex
 			rf.applyCond.Signal()
-			rf.DPrintf("update commit index to %d\n", rf.commitIndex)
 		}
 	}
 	reply.Term, reply.Success = rf.currentTermID, true
@@ -239,9 +237,9 @@ func (rf *Raft) InstallSnapshot(args *InstallSnapshotArgs, reply *InstallSnapsho
 	}
 
 	if args.Term > rf.currentTermID {
-		rf.convertToFollower(args.Term)
+		rf.becomeFollower(args.Term)
 	} else if args.Term == rf.currentTermID && rf.state == Candidate {
-		rf.convertToFollower(args.Term)
+		rf.becomeFollower(args.Term)
 	}
 
 	rf.electionTimerReset()
@@ -250,11 +248,10 @@ func (rf *Raft) InstallSnapshot(args *InstallSnapshotArgs, reply *InstallSnapsho
 		return
 	}
 
-	rf.RenewLog(args.LastIncludedIndex, args.LastIncludedTerm)
+	rf.renewLog(args.LastIncludedIndex, args.LastIncludedTerm)
 	rf.persister.Save(rf.encodeState(), args.Data)
 
 	rf.commitIndex = rf.raftLog.FirstIndex()
-	rf.DPrintf("update commitIndex to %d\n", rf.commitIndex)
 }
 
 func (rf *Raft) sendRequestVote(server int, args *RequestVoteArgs, reply *RequestVoteReply) bool {

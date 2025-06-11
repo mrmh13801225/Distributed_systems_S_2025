@@ -43,7 +43,7 @@ func (rf *Raft) appendOnce(server int) {
 		return
 	}
 
-	prevLogIndex := rf.PrevLogIndex(server)
+	prevLogIndex := rf.prevLogIndex(server)
 	if prevLogIndex < rf.raftLog.FirstIndex() {
 		rf.handleInstallSnapshotJob(server)
 	} else {
@@ -59,13 +59,12 @@ func (rf *Raft) handleInstallSnapshotJob(server int) {
 	if rf.sendInstallSnapshot(server, args, reply) {
 		rf.mu.Lock()
 		defer rf.mu.Unlock()
-		rf.DPrintf("send install snap shot to %d\n", server)
 		if rf.state != Leader || rf.currentTermID != args.Term {
 			return
 		}
 
 		if reply.Term > rf.currentTermID {
-			rf.convertToFollower(reply.Term)
+			rf.becomeFollower(reply.Term)
 			return
 		}
 
@@ -83,13 +82,12 @@ func (rf *Raft) handleAppendEntriesJob(server int) {
 		rf.mu.Lock()
 		defer rf.mu.Unlock()
 
-		rf.DPrintf("send append entries %v to %d\n", args.LogEntry, server)
 		if rf.state != Leader || rf.currentTermID != args.Term {
 			return
 		}
 
 		if reply.Term > rf.currentTermID {
-			rf.convertToFollower(reply.Term)
+			rf.becomeFollower(reply.Term)
 			return
 		}
 
@@ -100,8 +98,6 @@ func (rf *Raft) handleAppendEntriesJob(server int) {
 			rf.updateCommitIndex()
 		} else if reply.Confict {
 			rf.quickUpdateNextIndex(server, reply.XTerm, reply.XIndex, reply.XLen)
-			// rf.DPrintf("quick update next index %d to %d\n", server, rf.nextIndex[server])
-			// rf.nextIndex[server] = max(rf.nextIndex[server], rf.matchIndex[server]+1)
 		}
 	}
 }
@@ -112,7 +108,7 @@ func (rf *Raft) quickUpdateNextIndex(server int, xterm int, xindex int, xlen int
 		return
 	}
 
-	for i := min(rf.PrevLogIndex(server), rf.raftLog.LastIndex()); i >= rf.raftLog.FirstIndex(); i-- {
+	for i := min(rf.prevLogIndex(server), rf.raftLog.LastIndex()); i >= rf.raftLog.FirstIndex(); i-- {
 		if rf.raftLog.EntryAt(i).Term == xterm {
 			rf.nextIndex[server] = i + 1
 			return

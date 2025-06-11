@@ -19,7 +19,6 @@ func (rf *Raft) applier() {
 }
 
 func (rf *Raft) applyLogCommand() {
-	rf.DPrintf("apply log to index %d\n", rf.lastApplied)
 	rf.lastApplied += 1
 	command := rf.raftLog.EntryAt(rf.lastApplied).Command
 	if command == nil {
@@ -40,7 +39,6 @@ func (rf *Raft) applyLogCommand() {
 }
 
 func (rf *Raft) applySnapshotCommand() {
-	rf.DPrintf("apply snapshot to index %d\n", rf.raftLog.FirstIndex())
 	rf.lastApplied = rf.raftLog.FirstIndex()
 	applyMsg := raftapi.ApplyMsg{
 		SnapshotValid: true,
@@ -73,7 +71,6 @@ func (rf *Raft) updateCommitIndex() {
 		}
 		if count >= (len(rf.peers)/2+1) && rf.raftLog.EntryAt(N).Term == rf.currentTermID {
 			rf.commitIndex = N
-			rf.DPrintf("update commit index to %d\n", rf.commitIndex)
 			rf.applyCond.Signal()
 			rf.broadcastHeartBeat()
 			return

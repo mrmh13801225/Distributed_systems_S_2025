@@ -8,14 +8,11 @@ package raft
 
 import (
 	//	"bytes"
-
 	"math/rand"
 	"sync"
 	"sync/atomic"
 	"time"
-
 	//	"6.5840/labgob"
-
 	"6.5840/labrpc"
 	"6.5840/raftapi"
 	tester "6.5840/tester1"
@@ -90,7 +87,6 @@ func (rf *Raft) Start(command any) (int, int, bool) {
 		return -1, -1, false
 	}
 
-	rf.DPrintf("start command %v\n", command)
 	if command == nil {
 		panic("command is nil")
 	}
@@ -115,7 +111,6 @@ func (rf *Raft) Kill() {
 	// Your code here, if desired.
 	rf.mu.Lock()
 	close(rf.shutdownCh)
-	rf.DPrintf("killed\n")
 	rf.mu.Unlock()
 }
 
@@ -132,7 +127,7 @@ func (rf *Raft) ticker() {
 		case <-rf.electionTimer.C:
 			rf.mu.Lock()
 			if rf.state != Leader {
-				rf.convertToCondidate()
+				rf.becomeCandidate()
 			}
 			rf.electionTimerReset()
 			rf.mu.Unlock()

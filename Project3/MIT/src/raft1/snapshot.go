@@ -12,7 +12,6 @@ func (rf *Raft) Snapshot(index int, snapshot []byte) {
 func (rf *Raft) SaveSnapshot(index int, snapshot []byte) {
 	rf.mu.Lock()
 	defer rf.mu.Unlock()
-	rf.DPrintf("save snapshot to index %d\n", index)
 	if rf.raftLog.FirstIndex() >= index {
 		return
 	}
@@ -21,6 +20,6 @@ func (rf *Raft) SaveSnapshot(index int, snapshot []byte) {
 		return
 	}
 
-	rf.Shrink(index)
+	rf.shrinkLogFrom(index)
 	rf.persister.Save(rf.encodeState(), snapshot)
 }

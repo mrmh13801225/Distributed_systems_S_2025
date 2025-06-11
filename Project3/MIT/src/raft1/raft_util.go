@@ -22,7 +22,7 @@ func (rf *Raft) prevLogTerm(server int) int {
 	return rf.raftLog.EntryAt(prevIndex).Term
 }
 
-func (rf *Raft) electionTimerReset() {
+func (rf *Raft) resetElectionTimer() {
 	rf.electionTimer.Reset(time.Duration(750+rand.Int63()%750) * time.Millisecond)
 }
 

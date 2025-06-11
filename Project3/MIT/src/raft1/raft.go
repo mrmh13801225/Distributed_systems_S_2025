@@ -162,14 +162,14 @@ func Make(peers []*labrpc.ClientEnd, me int,
 		me:             me,
 		dead:           0,
 		applyCh:        applyCh,
-		currentTermID:    0,
+		currentTermID:  0,
 		votedFor:       -1,
 		state:          Follower,
 		commitIndex:    0,
 		electionTimer:  time.NewTimer(time.Duration(50+rand.Int63()%300) * time.Millisecond),
 		lastApplied:    0,
 		heartbeatTimer: time.NewTimer(50 * time.Millisecond),
-		shutdownCh:           make(chan int),
+		shutdownCh:     make(chan int),
 	}
 
 	rf.raftLog.Initialize()
@@ -177,8 +177,14 @@ func Make(peers []*labrpc.ClientEnd, me int,
 	// initialize from state persisted before a crash
 	rf.readPersist(persister.ReadRaftState())
 
-	rf.nextIndex = fillSlice(len(peers), rf.raftLog.LastIndex()+1)
-	rf.matchIndex = fillSlice(len(peers), 0)
+	// Inline initialization of nextIndex and matchIndex
+	lastIndex := rf.raftLog.LastIndex() + 1
+	rf.nextIndex = make([]int, len(peers))
+	rf.matchIndex = make([]int, len(peers))
+	for i := range peers {
+		rf.nextIndex[i] = lastIndex
+		rf.matchIndex[i] = 0
+	}
 
 	rf.applyCond = sync.NewCond(&rf.mu)
 	rf.appendCond = make([]*sync.Cond, len(peers))
@@ -191,7 +197,6 @@ func Make(peers []*labrpc.ClientEnd, me int,
 
 	// start ticker goroutine to start elections
 	go rf.ticker()
-
 	go rf.applier()
 
 	return rf

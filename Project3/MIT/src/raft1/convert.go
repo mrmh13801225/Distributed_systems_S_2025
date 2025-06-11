@@ -13,8 +13,16 @@ func (rf *Raft) becomeFollower(term int) {
 
 func (rf *Raft) becomeLeader() {
 	rf.state = Leader
-	rf.nextIndex = fillSlice(len(rf.peers), rf.raftLog.LastIndex()+1)
-	rf.matchIndex = fillSlice(len(rf.peers), 0)
+
+	lastIndex := rf.raftLog.LastIndex() + 1
+	rf.nextIndex = make([]int, len(rf.peers))
+	rf.matchIndex = make([]int, len(rf.peers))
+
+	for i := range rf.peers {
+		rf.nextIndex[i] = lastIndex
+		rf.matchIndex[i] = 0
+	}
+
 	rf.WakeAllAppender()
 }
 

@@ -45,13 +45,13 @@ func (rf *Raft) appendOnce(server int) {
 
 	prevLogIndex := rf.prevLogIndex(server)
 	if prevLogIndex < rf.raftLog.FirstIndex() {
-		rf.handleInstallSnapshotJob(server)
+		rf.sendSnapshotTo(server)
 	} else {
-		rf.handleAppendEntriesJob(server)
+		rf.sendAppendEntriesTo(server)
 	}
 }
 
-func (rf *Raft) handleInstallSnapshotJob(server int) {
+func (rf *Raft) sendSnapshotTo(server int) {
 	args := rf.genInstallSnapshotArgs()
 	reply := &InstallSnapshotReply{}
 	rf.mu.Unlock()
@@ -73,7 +73,7 @@ func (rf *Raft) handleInstallSnapshotJob(server int) {
 	}
 }
 
-func (rf *Raft) handleAppendEntriesJob(server int) {
+func (rf *Raft) sendAppendEntriesTo(server int) {
 	args := rf.genAppendEntriesArgs(server)
 	reply := &AppendEntriesReply{}
 	rf.mu.Unlock()
@@ -97,28 +97,46 @@ func (rf *Raft) handleAppendEntriesJob(server int) {
 
 			rf.updateCommitIndex()
 		} else if reply.Confict {
-			rf.quickUpdateNextIndex(server, reply.XTerm, reply.XIndex, reply.XLen)
+			// rf.updateNextIndexAfterConflict(server, reply.XTerm, reply.XIndex, reply.XLen)
+			rf.updateNextIndexAfterConflict(server, reply)
 		}
 	}
 }
 
-func (rf *Raft) quickUpdateNextIndex(server int, xterm int, xindex int, xlen int) {
-	if xterm == -1 && xindex == -1 {
-		rf.nextIndex[server] = xlen
+func (rf *Raft) updateNextIndexAfterConflict(server int, reply *AppendEntriesReply) {
+	if reply.XTerm == -1 && reply.XIndex == -1 {
+		rf.nextIndex[server] = reply.XLen
 		return
 	}
 
 	for i := min(rf.prevLogIndex(server), rf.raftLog.LastIndex()); i >= rf.raftLog.FirstIndex(); i-- {
-		if rf.raftLog.EntryAt(i).Term == xterm {
+		if rf.raftLog.EntryAt(i).Term == reply.XTerm {
 			rf.nextIndex[server] = i + 1
 			return
-		} else if rf.raftLog.EntryAt(i).Term < xterm {
+		} else if rf.raftLog.EntryAt(i).Term < reply.XTerm {
 			break
 		}
 	}
 
-	rf.nextIndex[server] = max(min(xindex, rf.raftLog.LastIndex()+1), rf.raftLog.FirstIndex())
+	rf.nextIndex[server] = max(min(reply.XIndex, rf.raftLog.LastIndex()+1), rf.raftLog.FirstIndex())
 }
+// func (rf *Raft) updateNextIndexAfterConflict(server int, xterm int, xindex int, xlen int) {
+// 	if xterm == -1 && xindex == -1 {
+// 		rf.nextIndex[server] = xlen
+// 		return
+// 	}
+
+// 	for i := min(rf.prevLogIndex(server), rf.raftLog.LastIndex()); i >= rf.raftLog.FirstIndex(); i-- {
+// 		if rf.raftLog.EntryAt(i).Term == xterm {
+// 			rf.nextIndex[server] = i + 1
+// 			return
+// 		} else if rf.raftLog.EntryAt(i).Term < xterm {
+// 			break
+// 		}
+// 	}
+
+// 	rf.nextIndex[server] = max(min(xindex, rf.raftLog.LastIndex()+1), rf.raftLog.FirstIndex())
+// }
 
 func (rf *Raft) broadcastHeartBeat() {
 	if rf.state != Leader {

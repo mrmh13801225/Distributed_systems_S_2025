@@ -5,6 +5,12 @@ type LogEntry struct {
 	Term    int
 	Index   int
 }
+// type RaftLogEntry struct {
+// 	Command     any // The client command
+// 	TermNumber  int // Term when entry was received by leader
+// 	LogIndex    int // Index in the log
+// }
+
 
 type RaftLog []LogEntry
 

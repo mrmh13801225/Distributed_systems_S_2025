@@ -1,5 +1,7 @@
 package raft
 
+// TODO:: refactor
+
 import (
 	"time"
 )
@@ -60,7 +62,6 @@ func (rf *Raft) doAppendJob(server int) {
 	}
 }
 
-
 func (rf *Raft) sendSnapshotTo(server int) {
 	args := rf.genInstallSnapshotArgs()
 	reply := &InstallSnapshotReply{}
@@ -69,12 +70,12 @@ func (rf *Raft) sendSnapshotTo(server int) {
 	if rf.sendInstallSnapshot(server, args, reply) {
 		rf.mu.Lock()
 		defer rf.mu.Unlock()
-		if rf.state != Leader || rf.currentTermID != args.Term {
+		if rf.state != Leader || rf.currentTermID != args.TermNumber {
 			return
 		}
 
-		if reply.Term > rf.currentTermID {
-			rf.becomeFollower(reply.Term)
+		if reply.TermNumber > rf.currentTermID {
+			rf.becomeFollower(reply.TermNumber)
 			return
 		}
 
@@ -92,12 +93,12 @@ func (rf *Raft) sendAppendEntriesTo(server int) {
 		rf.mu.Lock()
 		defer rf.mu.Unlock()
 
-		if rf.state != Leader || rf.currentTermID != args.Term {
+		if rf.state != Leader || rf.currentTermID != args.TermNumber {
 			return
 		}
 
-		if reply.Term > rf.currentTermID {
-			rf.becomeFollower(reply.Term)
+		if reply.TermNumber > rf.currentTermID {
+			rf.becomeFollower(reply.TermNumber)
 			return
 		}
 
@@ -120,33 +121,16 @@ func (rf *Raft) updateNextIndexAfterConflict(server int, reply *AppendEntriesRep
 	}
 
 	for i := min(rf.prevLogIndex(server), rf.raftLog.LastIndex()); i >= rf.raftLog.FirstIndex(); i-- {
-		if rf.raftLog.EntryAt(i).Term == reply.XTerm {
+		if rf.raftLog.EntryAt(i).TermNumber == reply.XTerm {
 			rf.nextIndex[server] = i + 1
 			return
-		} else if rf.raftLog.EntryAt(i).Term < reply.XTerm {
+		} else if rf.raftLog.EntryAt(i).TermNumber < reply.XTerm {
 			break
 		}
 	}
 
 	rf.nextIndex[server] = max(min(reply.XIndex, rf.raftLog.LastIndex()+1), rf.raftLog.FirstIndex())
 }
-// func (rf *Raft) updateNextIndexAfterConflict(server int, xterm int, xindex int, xlen int) {
-// 	if xterm == -1 && xindex == -1 {
-// 		rf.nextIndex[server] = xlen
-// 		return
-// 	}
-
-// 	for i := min(rf.prevLogIndex(server), rf.raftLog.LastIndex()); i >= rf.raftLog.FirstIndex(); i-- {
-// 		if rf.raftLog.EntryAt(i).Term == xterm {
-// 			rf.nextIndex[server] = i + 1
-// 			return
-// 		} else if rf.raftLog.EntryAt(i).Term < xterm {
-// 			break
-// 		}
-// 	}
-
-// 	rf.nextIndex[server] = max(min(xindex, rf.raftLog.LastIndex()+1), rf.raftLog.FirstIndex())
-// }
 
 func (rf *Raft) broadcastHeartBeat() {
 	if rf.state != Leader {

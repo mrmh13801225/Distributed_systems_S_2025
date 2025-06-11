@@ -1,5 +1,7 @@
 package raft
 
+// TODO:: refactor
+
 import (
 	"6.5840/raftapi"
 )
@@ -31,7 +33,7 @@ func (rf *Raft) applyLogEntry() {
 	applyMsg := raftapi.ApplyMsg{
 		CommandValid: true,
 		Command:      entry.Command,
-		CommandIndex: entry.Index,
+		CommandIndex: entry.LogIndex,
 	}
 	rf.mu.Unlock()
 
@@ -69,7 +71,7 @@ func (rf *Raft) updateCommitIndex() {
 			}
 		}
 
-		if count >= (len(rf.peers)/2+1) && rf.raftLog.EntryAt(N).Term == rf.currentTermID {
+		if count >= (len(rf.peers)/2+1) && rf.raftLog.EntryAt(N).TermNumber == rf.currentTermID {
 			rf.commitIndex = N
 			rf.applyCond.Signal()
 			rf.broadcastHeartBeat()

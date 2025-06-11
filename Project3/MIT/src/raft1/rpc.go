@@ -1,5 +1,7 @@
 package raft
 
+// TODO:: refactor
+
 func (rf *Raft) isCandidateLogUpToDate(args *RequestVoteArgs) bool {
 	if rf.raftLog.LastTerm() != args.LastLogTerm {
 		return args.LastLogTerm > rf.raftLog.LastTerm()
@@ -9,7 +11,7 @@ func (rf *Raft) isCandidateLogUpToDate(args *RequestVoteArgs) bool {
 
 func (rf *Raft) genRequestVoteArgs() *RequestVoteArgs {
 	return &RequestVoteArgs{
-		Term:         rf.currentTermID,
+		TermNumber:         rf.currentTermID,
 		CandidateId:  rf.me,
 		LastLogIndex: rf.raftLog.LastIndex(),
 		LastLogTerm:  rf.raftLog.LastTerm(),
@@ -45,7 +47,7 @@ func (rf *Raft) genRequestVoteArgs() *RequestVoteArgs {
 // the struct itself.
 
 type AppendEntriesArgs struct {
-	Term         int // leader’s term
+	TermNumber         int // leader’s term
 	PrevLogIndex int // index of log entry immediately preceding new ones
 
 	PrevLogTerm int       // term of prevLogIndex entry
@@ -55,7 +57,7 @@ type AppendEntriesArgs struct {
 }
 
 type AppendEntriesReply struct {
-	Term    int  // currentTerm, for leader to update itself
+	TermNumber    int  // currentTerm, for leader to update itself
 	Success bool // true if follower contained entry matching prevLogIndex and prevLogTerm
 
 	Confict bool
@@ -65,30 +67,30 @@ type AppendEntriesReply struct {
 }
 
 type InstallSnapshotArgs struct {
-	Term              int    // leader’s term
+	TermNumber              int    // leader’s term
 	LastIncludedIndex int    // snapshot replaces all entries up through and including this index
 	LastIncludedTerm  int    // term of LastIncludedIndex
 	Data              []byte // raw bytes of snapshot chunk, starting at offset
 }
 
 type InstallSnapshotReply struct {
-	Term int // currentTerm, for leader to update itself
+	TermNumber int // currentTerm, for leader to update itself
 }
 
 func (rf *Raft) AppendEntries(args *AppendEntriesArgs, reply *AppendEntriesReply) {
 	rf.mu.Lock()
 	defer rf.mu.Unlock()
 
-	reply.Term = rf.currentTermID
+	reply.TermNumber = rf.currentTermID
 	reply.Success = false
 	reply.Confict = false
 
-	if args.Term < rf.currentTermID {
+	if args.TermNumber < rf.currentTermID {
 		return
 	}
 
-	if args.Term > rf.currentTermID || (args.Term == rf.currentTermID && rf.state == Candidate) {
-		rf.becomeFollower(args.Term)
+	if args.TermNumber > rf.currentTermID || (args.TermNumber == rf.currentTermID && rf.state == Candidate) {
+		rf.becomeFollower(args.TermNumber)
 	}
 
 	rf.resetElectionTimer()
@@ -105,12 +107,12 @@ func (rf *Raft) AppendEntries(args *AppendEntriesArgs, reply *AppendEntriesReply
 		return
 	}
 
-	if rf.raftLog.EntryAt(args.PrevLogIndex).Term != args.PrevLogTerm {
-		term := rf.raftLog.EntryAt(args.PrevLogIndex).Term
+	if rf.raftLog.EntryAt(args.PrevLogIndex).TermNumber != args.PrevLogTerm {
+		term := rf.raftLog.EntryAt(args.PrevLogIndex).TermNumber
 		reply.Confict = true
 		reply.XTerm = term
 		i := args.PrevLogIndex - 1
-		for i >= rf.raftLog.FirstIndex() && rf.raftLog.EntryAt(i).Term == term {
+		for i >= rf.raftLog.FirstIndex() && rf.raftLog.EntryAt(i).TermNumber == term {
 			i--
 		}
 		reply.XIndex = i + 1
@@ -120,7 +122,7 @@ func (rf *Raft) AppendEntries(args *AppendEntriesArgs, reply *AppendEntriesReply
 
 	start := args.PrevLogIndex + 1 - rf.raftLog.FirstIndex()
 	for i, e := range args.LogEntry {
-		if start+i >= len(rf.raftLog) || rf.raftLog[start+i].Term != e.Term {
+		if start+i >= len(rf.raftLog) || rf.raftLog[start+i].TermNumber != e.TermNumber {
 			rf.raftLog = append(rf.raftLog[:start+i], args.LogEntry[i:]...)
 			rf.persist()
 			break
@@ -137,7 +139,7 @@ func (rf *Raft) AppendEntries(args *AppendEntriesArgs, reply *AppendEntriesReply
 
 func (rf *Raft) genAppendEntriesArgs(server int) *AppendEntriesArgs {
 	return &AppendEntriesArgs{
-		Term:         rf.currentTermID,
+		TermNumber:         rf.currentTermID,
 		PrevLogIndex: rf.prevLogIndex(server),
 		PrevLogTerm:  rf.prevLogTerm(server),
 		LogEntry:     rf.raftLog.EntriesInRange(rf.prevLogIndex(server)+1, rf.raftLog.LastIndex()+1),
@@ -149,20 +151,20 @@ func (rf *Raft) InstallSnapshot(args *InstallSnapshotArgs, reply *InstallSnapsho
 	rf.mu.Lock()
 	defer rf.mu.Unlock()
 
-	reply.Term = rf.currentTermID
-	if args.Term < rf.currentTermID {
+	reply.TermNumber = rf.currentTermID
+	if args.TermNumber < rf.currentTermID {
 		return
 	}
 
-	// if args.Term > rf.currentTermID {
-	// 	rf.becomeFollower(args.Term)
-	// } else if args.Term == rf.currentTermID && rf.state == Candidate {
-	// 	rf.becomeFollower(args.Term)
+	// if args.TermNumber > rf.currentTermID {
+	// 	rf.becomeFollower(args.TermNumber)
+	// } else if args.TermNumber == rf.currentTermID && rf.state == Candidate {
+	// 	rf.becomeFollower(args.TermNumber)
 	// }
 
-	if args.Term > rf.currentTermID || 
-		(args.Term == rf.currentTermID && rf.state == Candidate) {
-		rf.becomeFollower(args.Term)
+	if args.TermNumber > rf.currentTermID || 
+		(args.TermNumber == rf.currentTermID && rf.state == Candidate) {
+		rf.becomeFollower(args.TermNumber)
 	}
 
 	rf.resetElectionTimer()
@@ -179,7 +181,7 @@ func (rf *Raft) InstallSnapshot(args *InstallSnapshotArgs, reply *InstallSnapsho
 
 func (rf *Raft) genInstallSnapshotArgs() *InstallSnapshotArgs {
 	return &InstallSnapshotArgs{
-		Term:              rf.currentTermID,
+		TermNumber:              rf.currentTermID,
 		LastIncludedIndex: rf.raftLog.FirstIndex(),
 		LastIncludedTerm:  rf.raftLog.FirstTerm(),
 		Data:              rf.persister.ReadSnapshot(),

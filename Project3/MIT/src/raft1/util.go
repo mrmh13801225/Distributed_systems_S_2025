@@ -45,7 +45,7 @@ func (rf *Raft) prevLogTerm(server int) int {
 	if prevIndex < 0 {
 		panic(fmt.Sprintf("server %d prevIndex %d < 0", server, prevIndex))
 	}
-	return rf.raftLog.EntryAt(prevIndex).Term
+	return rf.raftLog.EntryAt(prevIndex).TermNumber
 }
 
 func (rf *Raft) resetElectionTimer() {
@@ -70,7 +70,7 @@ func (rf *Raft) shrinkLogFrom(index int) {
 
 // Reset the log to a new base entry at (firstIndex, firstTerm)
 func (rf *Raft) renewLog(firstIndex, firstTerm int) {
-	rf.raftLog = []LogEntry{{Command: nil, Term: firstTerm, Index: firstIndex}}
+	rf.raftLog = []LogEntry{{Command: nil, TermNumber: firstTerm, LogIndex: firstIndex}}
 }
 
 func (rf *Raft) startElection() {
@@ -92,7 +92,7 @@ func (rf *Raft) startElection() {
 				defer rf.mu.Unlock()
 
 				// Ignore stale term or role change
-				if rf.state != Candidate || rf.currentTermID != args.Term {
+				if rf.state != Candidate || rf.currentTermID != args.TermNumber {
 					return
 				}
 
@@ -101,8 +101,8 @@ func (rf *Raft) startElection() {
 					if int(newCount) >= (len(rf.peers) / 2) + 1 {
 						rf.becomeLeader()
 					}
-				} else if reply.Term > rf.currentTermID {
-					rf.becomeFollower(reply.Term)
+				} else if reply.TermNumber > rf.currentTermID {
+					rf.becomeFollower(reply.TermNumber)
 				}
 			}
 		}(peerID)
@@ -138,4 +138,56 @@ func (rf *Raft) becomeCandidate() {
 	rf.currentTermID += 1
 	rf.persist()
 	rf.startElection()
+}
+
+// Log related Utils:
+
+type LogEntry struct {
+	Command     any // The client command
+	TermNumber  int // Term when entry was received by leader
+	LogIndex    int // Index in the log
+}
+
+type RaftLog []LogEntry
+
+func (log RaftLog) FirstIndex() int {
+	idx := 0
+	return log[idx].LogIndex
+}
+
+func (log RaftLog) FirstTerm() int {
+	idx := 0
+	return log[idx].TermNumber
+}
+
+func (log RaftLog) LastIndex() int {
+	idx := len(log) - 1
+	return log[idx].LogIndex
+}
+
+func (log RaftLog) LastTerm() int {
+	idx := len(log) - 1
+	return log[idx].TermNumber
+}
+
+func (log RaftLog) EntryAt(index int) LogEntry {
+	idx := index - log.FirstIndex()
+	return log[idx]
+}
+
+func (log RaftLog) EntriesInRange(start, end int) []LogEntry {
+	startIdx := start - log.FirstIndex()
+	endIdx := end - log.FirstIndex()
+	return log[startIdx:endIdx]
+}
+
+func (log *RaftLog) Append(command any, term int) int {
+	Idx := log.LastIndex() + 1
+	*log = append(*log, LogEntry{Command: command, TermNumber: term, LogIndex: Idx})
+	return Idx
+}
+
+func (log *RaftLog) Initialize() {
+	*log = make([]LogEntry, 0)
+	*log = append(*log, LogEntry{Command: nil, TermNumber: 0, LogIndex: 0})
 }

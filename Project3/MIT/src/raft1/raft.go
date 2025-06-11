@@ -145,7 +145,7 @@ func (rf *Raft) SaveSnapshot(index int, snapshot []byte) {
 type RequestVoteArgs struct {
 	// Your data here (3A, 3B).
 
-	Term         int // candidate’s term
+	TermNumber         int // candidate’s term
 	CandidateId  int // candidate requesting vote
 	LastLogIndex int // index of candidate’s last log entry
 	LastLogTerm  int // term of candidate’s last log entry
@@ -157,7 +157,7 @@ type RequestVoteArgs struct {
 type RequestVoteReply struct {
 	// Your data here (3A).
 
-	Term        int  // currentTerm, for candidate to update itself
+	TermNumber        int  // currentTerm, for candidate to update itself
 	VoteGranted bool // true means candidate received vote
 }
 
@@ -165,18 +165,18 @@ type RequestVoteReply struct {
 func (rf *Raft) RequestVote(args *RequestVoteArgs, reply *RequestVoteReply) {
 	rf.mu.Lock()
 	defer rf.mu.Unlock()
-	reply.Term = rf.currentTermID
+	reply.TermNumber = rf.currentTermID
 
-	if args.Term < rf.currentTermID {
+	if args.TermNumber < rf.currentTermID {
 		reply.VoteGranted = false
 		return
 	}
 
-	if args.Term > rf.currentTermID {
-		rf.becomeFollower(args.Term)
+	if args.TermNumber > rf.currentTermID {
+		rf.becomeFollower(args.TermNumber)
 	}
 
-	if rf.currentTermID == args.Term && (rf.votedFor == -1 || rf.votedFor == args.CandidateId) && rf.isCandidateLogUpToDate(args) {
+	if rf.currentTermID == args.TermNumber && (rf.votedFor == -1 || rf.votedFor == args.CandidateId) && rf.isCandidateLogUpToDate(args) {
 		reply.VoteGranted = true
 		rf.votedFor = args.CandidateId
 		rf.persist()

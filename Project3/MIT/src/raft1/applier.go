@@ -13,7 +13,7 @@ func (rf *Raft) applier() {
 			rf.applyCond.Wait()
 		}
 
-		if rf.lastApplied < rf.raftLog.FirstIndex() {
+		if rf.lastApplied < rf.logStore.FirstIndex() {
 			rf.applySnapshot()
 		} else {
 			rf.applyLogEntry()
@@ -23,7 +23,7 @@ func (rf *Raft) applier() {
 
 func (rf *Raft) applyLogEntry() {
 	rf.lastApplied++
-	entry := rf.raftLog.EntryAt(rf.lastApplied)
+	entry := rf.logStore.EntryAt(rf.lastApplied)
 
 	if entry.Command == nil {
 		rf.mu.Unlock()
@@ -49,13 +49,13 @@ func (rf *Raft) sendApplyMsg(msg raftapi.ApplyMsg) {
 }
 
 func (rf *Raft) applySnapshot() {
-	rf.lastApplied = rf.raftLog.FirstIndex()
+	rf.lastApplied = rf.logStore.FirstIndex()
 
 	applyMsg := raftapi.ApplyMsg{
 		SnapshotValid: true,
 		Snapshot:      rf.persister.ReadSnapshot(),
-		SnapshotTerm:  rf.raftLog.FirstTerm(),
-		SnapshotIndex: rf.raftLog.FirstIndex(),
+		SnapshotTerm:  rf.logStore.FirstTerm(),
+		SnapshotIndex: rf.logStore.FirstIndex(),
 	}
 	rf.mu.Unlock()
 
@@ -63,7 +63,7 @@ func (rf *Raft) applySnapshot() {
 }
 
 func (rf *Raft) updateCommitIndex() {
-	for N := rf.raftLog.LastIndex(); N > max(rf.commitIndex, rf.raftLog.FirstIndex()); N-- {
+	for N := rf.logStore.LastIndex(); N > max(rf.commitIndex, rf.logStore.FirstIndex()); N-- {
 		count := 1
 		for i := range rf.peers {
 			if i != rf.me && rf.matchIndex[i] >= N {
@@ -71,7 +71,7 @@ func (rf *Raft) updateCommitIndex() {
 			}
 		}
 
-		if count >= (len(rf.peers)/2+1) && rf.raftLog.EntryAt(N).TermNumber == rf.currentTermID {
+		if count >= (len(rf.peers)/2+1) && rf.logStore.EntryAt(N).TermNumber == rf.currentTermID {
 			rf.commitIndex = N
 			rf.applyCond.Signal()
 			rf.broadcastHeartBeat()

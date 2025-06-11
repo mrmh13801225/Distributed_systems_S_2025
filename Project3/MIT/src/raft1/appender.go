@@ -14,13 +14,13 @@ import (
 // decrement nextIndex and retry (§5.3)
 
 func (rf *Raft) appender(server int) {
-	lock := rf.appendCond[server].L
+	lock := rf.appendConds[server].L
 	lock.Lock()
 	defer lock.Unlock()
 
 	for !rf.killed() {
 		for !rf.shouldAppend(server) {
-			rf.appendCond[server].Wait()
+			rf.appendConds[server].Wait()
 		}
 		rf.doAppendJob(server)
 		time.Sleep(10 * time.Millisecond)
@@ -30,14 +30,14 @@ func (rf *Raft) appender(server int) {
 func (rf *Raft) shouldAppend(server int) bool {
 	rf.mu.RLock()
 	defer rf.mu.RUnlock()
-	return rf.state == Leader && rf.nextIndex[server] <= rf.raftLog.LastIndex()
+	return rf.state == Leader && rf.nextIndex[server] <= rf.logStore.LastIndex()
 }
 
 
 func (rf *Raft) WakeAllAppender() {
 	for server := range rf.peers {
 		if server != rf.me {
-			rf.appendCond[server].Signal()
+			rf.appendConds[server].Signal()
 		}
 	}
 }
@@ -55,7 +55,7 @@ func (rf *Raft) doAppendJob(server int) {
 		return
 	}
 
-	if rf.prevLogIndex(server) < rf.raftLog.FirstIndex() {
+	if rf.prevLogIndex(server) < rf.logStore.FirstIndex() {
 		rf.sendSnapshotTo(server)
 	} else {
 		rf.sendAppendEntriesTo(server)
@@ -120,16 +120,16 @@ func (rf *Raft) updateNextIndexAfterConflict(server int, reply *AppendEntriesRep
 		return
 	}
 
-	for i := min(rf.prevLogIndex(server), rf.raftLog.LastIndex()); i >= rf.raftLog.FirstIndex(); i-- {
-		if rf.raftLog.EntryAt(i).TermNumber == reply.XTerm {
+	for i := min(rf.prevLogIndex(server), rf.logStore.LastIndex()); i >= rf.logStore.FirstIndex(); i-- {
+		if rf.logStore.EntryAt(i).TermNumber == reply.XTerm {
 			rf.nextIndex[server] = i + 1
 			return
-		} else if rf.raftLog.EntryAt(i).TermNumber < reply.XTerm {
+		} else if rf.logStore.EntryAt(i).TermNumber < reply.XTerm {
 			break
 		}
 	}
 
-	rf.nextIndex[server] = max(min(reply.XIndex, rf.raftLog.LastIndex()+1), rf.raftLog.FirstIndex())
+	rf.nextIndex[server] = max(min(reply.XIndex, rf.logStore.LastIndex()+1), rf.logStore.FirstIndex())
 }
 
 func (rf *Raft) broadcastHeartBeat() {

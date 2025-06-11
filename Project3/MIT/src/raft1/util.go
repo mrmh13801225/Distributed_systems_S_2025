@@ -1,12 +1,13 @@
 package raft
 
 import (
-	"log"
-	"fmt"
-	"math/rand"
-	"time"
-	"sync/atomic"
 	"bytes"
+	"fmt"
+	"log"
+	"math/rand"
+	"sync/atomic"
+	"time"
+
 	"6.5840/labgob"
 )
 
@@ -27,7 +28,7 @@ func (rf *Raft) encodeState() []byte {
 	if err := encoder.Encode(rf.votedFor); err != nil {
 		panic("failed to encode votedFor")
 	}
-	if err := encoder.Encode(rf.raftLog); err != nil {
+	if err := encoder.Encode(rf.logStore); err != nil {
 		panic("failed to encode log")
 	}
 
@@ -45,7 +46,7 @@ func (rf *Raft) prevLogTerm(server int) int {
 	if prevIndex < 0 {
 		panic(fmt.Sprintf("server %d prevIndex %d < 0", server, prevIndex))
 	}
-	return rf.raftLog.EntryAt(prevIndex).TermNumber
+	return rf.logStore.EntryAt(prevIndex).TermNumber
 }
 
 func (rf *Raft) resetElectionTimer() {
@@ -58,22 +59,22 @@ func (rf *Raft) heartbeatTimerReset() {
 
 // shrinkLogFrom the log starting from index, keeping later entries
 func (rf *Raft) shrinkLogFrom(index int) {
-	start := index - rf.raftLog.FirstIndex()
-	if start < 0 || start >= len(rf.raftLog) {
+	start := index - rf.logStore.FirstIndex()
+	if start < 0 || start >= len(rf.logStore) {
 		panic("shrinkLogFrom: invalid shrink index")
 	}
 
-	newLog := append([]LogEntry(nil), rf.raftLog[start:]...)
+	newLog := append([]LogEntry(nil), rf.logStore[start:]...)
 	newLog[0].Command = nil // clear first dummy command
-	rf.raftLog = newLog
+	rf.logStore = newLog
 }
 
 // Reset the log to a new base entry at (firstIndex, firstTerm)
 func (rf *Raft) renewLog(firstIndex, firstTerm int) {
-	rf.raftLog = []LogEntry{{Command: nil, TermNumber: firstTerm, LogIndex: firstIndex}}
+	rf.logStore = []LogEntry{{Command: nil, TermNumber: firstTerm, LogIndex: firstIndex}}
 }
 
-func (rf *Raft) startElection() {
+func (rf *Raft) startElectionProcess() {
 	rf.votedFor = rf.me
 	rf.persist()
 
@@ -121,7 +122,7 @@ func (rf *Raft) becomeFollower(term int) {
 func (rf *Raft) becomeLeader() {
 	rf.state = Leader
 
-	lastIndex := rf.raftLog.LastIndex() + 1
+	lastIndex := rf.logStore.LastIndex() + 1
 	rf.nextIndex = make([]int, len(rf.peers))
 	rf.matchIndex = make([]int, len(rf.peers))
 
@@ -137,7 +138,7 @@ func (rf *Raft) becomeCandidate() {
 	rf.state = Candidate
 	rf.currentTermID += 1
 	rf.persist()
-	rf.startElection()
+	rf.startElectionProcess()
 }
 
 // Log related Utils:

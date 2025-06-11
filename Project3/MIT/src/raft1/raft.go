@@ -38,12 +38,12 @@ type Raft struct {
 	// Look at the paper's Figure 2 for a description of what
 	// state a Raft server must maintain.
 	applyCond  *sync.Cond
-	appendCond []*sync.Cond
+	appendConds []*sync.Cond
 	applyCh chan raftapi.ApplyMsg
 	// Persistent state on all servers
 	currentTermID int
 	votedFor    int
-	raftLog         RaftLog
+	logStore         RaftLog
 	// Volatile state on all servers
 	commitIndex int
 	lastApplied int
@@ -105,7 +105,7 @@ func (rf *Raft) readPersist(data []byte) {
 
 	rf.currentTermID = term
 	rf.votedFor = votedFor
-	rf.raftLog = append([]LogEntry(nil), log...) // deep copy
+	rf.logStore = append([]LogEntry(nil), log...) // deep copy
 }
 
 // PersistBytes returns the size in bytes of the persisted Raft state.
@@ -128,7 +128,7 @@ func (rf *Raft) Snapshot(index int, snapshot []byte) {
 func (rf *Raft) SaveSnapshot(index int, snapshot []byte) {
 	rf.mu.Lock()
 	defer rf.mu.Unlock()
-	if rf.raftLog.FirstIndex() >= index {
+	if rf.logStore.FirstIndex() >= index {
 		return
 	}
 
@@ -241,7 +241,7 @@ func (rf *Raft) Start(command any) (int, int, bool) {
 	if command == nil {
 		panic("command is nil")
 	}
-	index := rf.raftLog.Append(command, rf.currentTermID)
+	index := rf.logStore.Append(command, rf.currentTermID)
 	rf.persist()
 	rf.WakeAllAppender()
 
@@ -322,13 +322,13 @@ func Make(peers []*labrpc.ClientEnd, me int,
 		shutdownCh:     make(chan int),
 	}
 
-	rf.raftLog.Initialize()
+	rf.logStore.Initialize()
 
 	// initialize from state persisted before a crash
 	rf.readPersist(persister.ReadRaftState())
 
 	// Inline initialization of nextIndex and matchIndex
-	lastIndex := rf.raftLog.LastIndex() + 1
+	lastIndex := rf.logStore.LastIndex() + 1
 	rf.nextIndex = make([]int, len(peers))
 	rf.matchIndex = make([]int, len(peers))
 	for i := range peers {
@@ -337,10 +337,10 @@ func Make(peers []*labrpc.ClientEnd, me int,
 	}
 
 	rf.applyCond = sync.NewCond(&rf.mu)
-	rf.appendCond = make([]*sync.Cond, len(peers))
+	rf.appendConds = make([]*sync.Cond, len(peers))
 	for server := range peers {
 		if server != me {
-			rf.appendCond[server] = sync.NewCond(&sync.Mutex{})
+			rf.appendConds[server] = sync.NewCond(&sync.Mutex{})
 			go rf.appender(server)
 		}
 	}

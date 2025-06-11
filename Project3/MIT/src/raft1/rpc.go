@@ -3,18 +3,18 @@ package raft
 // TODO:: refactor
 
 func (rf *Raft) isCandidateLogUpToDate(args *RequestVoteArgs) bool {
-	if rf.raftLog.LastTerm() != args.LastLogTerm {
-		return args.LastLogTerm > rf.raftLog.LastTerm()
+	if rf.logStore.LastTerm() != args.LastLogTerm {
+		return args.LastLogTerm > rf.logStore.LastTerm()
 	}
-	return args.LastLogIndex >= rf.raftLog.LastIndex()
+	return args.LastLogIndex >= rf.logStore.LastIndex()
 }
 
 func (rf *Raft) genRequestVoteArgs() *RequestVoteArgs {
 	return &RequestVoteArgs{
 		TermNumber:         rf.currentTermID,
 		CandidateId:  rf.me,
-		LastLogIndex: rf.raftLog.LastIndex(),
-		LastLogTerm:  rf.raftLog.LastTerm(),
+		LastLogIndex: rf.logStore.LastIndex(),
+		LastLogTerm:  rf.logStore.LastTerm(),
 	}
 }
 
@@ -95,42 +95,42 @@ func (rf *Raft) AppendEntries(args *AppendEntriesArgs, reply *AppendEntriesReply
 
 	rf.resetElectionTimer()
 
-	if args.PrevLogIndex < rf.raftLog.FirstIndex() {
+	if args.PrevLogIndex < rf.logStore.FirstIndex() {
 		return
 	}
 
-	if args.PrevLogIndex > rf.raftLog.LastIndex() {
+	if args.PrevLogIndex > rf.logStore.LastIndex() {
 		reply.Confict = true
 		reply.XTerm = -1
 		reply.XIndex = -1
-		reply.XLen = rf.raftLog.LastIndex() + 1
+		reply.XLen = rf.logStore.LastIndex() + 1
 		return
 	}
 
-	if rf.raftLog.EntryAt(args.PrevLogIndex).TermNumber != args.PrevLogTerm {
-		term := rf.raftLog.EntryAt(args.PrevLogIndex).TermNumber
+	if rf.logStore.EntryAt(args.PrevLogIndex).TermNumber != args.PrevLogTerm {
+		term := rf.logStore.EntryAt(args.PrevLogIndex).TermNumber
 		reply.Confict = true
 		reply.XTerm = term
 		i := args.PrevLogIndex - 1
-		for i >= rf.raftLog.FirstIndex() && rf.raftLog.EntryAt(i).TermNumber == term {
+		for i >= rf.logStore.FirstIndex() && rf.logStore.EntryAt(i).TermNumber == term {
 			i--
 		}
 		reply.XIndex = i + 1
-		reply.XLen = rf.raftLog.LastIndex() + 1
+		reply.XLen = rf.logStore.LastIndex() + 1
 		return
 	}
 
-	start := args.PrevLogIndex + 1 - rf.raftLog.FirstIndex()
+	start := args.PrevLogIndex + 1 - rf.logStore.FirstIndex()
 	for i, e := range args.LogEntry {
-		if start+i >= len(rf.raftLog) || rf.raftLog[start+i].TermNumber != e.TermNumber {
-			rf.raftLog = append(rf.raftLog[:start+i], args.LogEntry[i:]...)
+		if start+i >= len(rf.logStore) || rf.logStore[start+i].TermNumber != e.TermNumber {
+			rf.logStore = append(rf.logStore[:start+i], args.LogEntry[i:]...)
 			rf.persist()
 			break
 		}
 	}
 
 	if args.LeaderCommit > rf.commitIndex {
-		rf.commitIndex = min(args.LeaderCommit, rf.raftLog.LastIndex())
+		rf.commitIndex = min(args.LeaderCommit, rf.logStore.LastIndex())
 		rf.applyCond.Signal()
 	}
 
@@ -142,7 +142,7 @@ func (rf *Raft) genAppendEntriesArgs(server int) *AppendEntriesArgs {
 		TermNumber:         rf.currentTermID,
 		PrevLogIndex: rf.prevLogIndex(server),
 		PrevLogTerm:  rf.prevLogTerm(server),
-		LogEntry:     rf.raftLog.EntriesInRange(rf.prevLogIndex(server)+1, rf.raftLog.LastIndex()+1),
+		LogEntry:     rf.logStore.EntriesInRange(rf.prevLogIndex(server)+1, rf.logStore.LastIndex()+1),
 		LeaderCommit: rf.commitIndex,
 	}
 }
@@ -176,14 +176,14 @@ func (rf *Raft) InstallSnapshot(args *InstallSnapshotArgs, reply *InstallSnapsho
 	rf.renewLog(args.LastIncludedIndex, args.LastIncludedTerm)
 	rf.persister.Save(rf.encodeState(), args.Data)
 
-	rf.commitIndex = rf.raftLog.FirstIndex()
+	rf.commitIndex = rf.logStore.FirstIndex()
 }
 
 func (rf *Raft) genInstallSnapshotArgs() *InstallSnapshotArgs {
 	return &InstallSnapshotArgs{
 		TermNumber:              rf.currentTermID,
-		LastIncludedIndex: rf.raftLog.FirstIndex(),
-		LastIncludedTerm:  rf.raftLog.FirstTerm(),
+		LastIncludedIndex: rf.logStore.FirstIndex(),
+		LastIncludedTerm:  rf.logStore.FirstTerm(),
 		Data:              rf.persister.ReadSnapshot(),
 	}
 }

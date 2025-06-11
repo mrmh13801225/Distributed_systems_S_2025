@@ -58,7 +58,7 @@ func (rf *Raft) startElection() {
 
 				if reply.VoteGranted {
 					newCount := atomic.AddInt32(&voteCount, 1)
-					if int(newCount) >= len(rf.peers)/2+1 {
+					if int(newCount) >= (len(rf.peers) / 2) + 1 {
 						rf.becomeLeader()
 					}
 				} else if reply.Term > rf.currentTermID {

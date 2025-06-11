@@ -10,23 +10,27 @@ import (
 // follower (§5.3)
 // • If AppendEntries fails because of log inconsistency:
 // decrement nextIndex and retry (§5.3)
+
 func (rf *Raft) appender(server int) {
-	rf.appendCond[server].L.Lock()
-	defer rf.appendCond[server].L.Unlock()
+	lock := rf.appendCond[server].L
+	lock.Lock()
+	defer lock.Unlock()
+
 	for !rf.killed() {
-		for !rf.canAppend(server) {
+		for !rf.shouldAppend(server) {
 			rf.appendCond[server].Wait()
 		}
-		rf.appendOnce(server)
+		rf.doAppendJob(server)
 		time.Sleep(10 * time.Millisecond)
 	}
 }
 
-func (rf *Raft) canAppend(server int) bool {
+func (rf *Raft) shouldAppend(server int) bool {
 	rf.mu.RLock()
 	defer rf.mu.RUnlock()
 	return rf.state == Leader && rf.nextIndex[server] <= rf.raftLog.LastIndex()
 }
+
 
 func (rf *Raft) WakeAllAppender() {
 	for server := range rf.peers {
@@ -36,20 +40,26 @@ func (rf *Raft) WakeAllAppender() {
 	}
 }
 
-func (rf *Raft) appendOnce(server int) {
+func (rf *Raft) doAppendJob(server int) {
 	rf.mu.Lock()
+	defer func() {
+		if rf.mu.TryLock() {
+			rf.mu.Unlock()
+		}
+	}()
+
 	if rf.state != Leader {
 		rf.mu.Unlock()
 		return
 	}
 
-	prevLogIndex := rf.prevLogIndex(server)
-	if prevLogIndex < rf.raftLog.FirstIndex() {
+	if rf.prevLogIndex(server) < rf.raftLog.FirstIndex() {
 		rf.sendSnapshotTo(server)
 	} else {
 		rf.sendAppendEntriesTo(server)
 	}
 }
+
 
 func (rf *Raft) sendSnapshotTo(server int) {
 	args := rf.genInstallSnapshotArgs()
@@ -145,7 +155,7 @@ func (rf *Raft) broadcastHeartBeat() {
 
 	for server := range rf.peers {
 		if server != rf.me {
-			go rf.appendOnce(server)
+			go rf.doAppendJob(server)
 		}
 	}
 }

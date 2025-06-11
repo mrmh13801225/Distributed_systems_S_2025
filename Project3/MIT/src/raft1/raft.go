@@ -7,13 +7,13 @@ package raft
 // Make() creates a new raft peer that implements the raft interface.
 
 import (
-	//	"bytes"
+	"bytes"
 	"math/rand"
 	"sync"
 	"sync/atomic"
 	"time"
 
-	//	"6.5840/labgob"
+	"6.5840/labgob"
 	"6.5840/labrpc"
 	"6.5840/raftapi"
 	tester "6.5840/tester1"
@@ -65,6 +65,156 @@ func (rf *Raft) GetState() (int, bool) {
 	term := rf.currentTermID
 	isleader := rf.state == Leader
 	return term, isleader
+}
+
+// save Raft's persistent state to stable storage,
+// where it can later be retrieved after a crash and restart.
+// see paper's Figure 2 for a description of what should be persistent.
+// before you've implemented snapshots, you should pass nil as the
+// second argument to persister.Save().
+// after you've implemented snapshots, pass the current snapshot
+// (or nil if there's not yet a snapshot).
+func (rf *Raft) persist() {
+	state := rf.encodeState()
+	snapshot := rf.persister.ReadSnapshot()
+	rf.persister.Save(state, snapshot)
+}
+
+// readPersist restores the previously persisted state.
+// This should be called during initialization.
+func (rf *Raft) readPersist(data []byte) {
+	rf.mu.Lock()
+	defer rf.mu.Unlock()
+
+	if data == nil || len(data) == 0 {
+		return // no persisted state
+	}
+
+	buffer := bytes.NewBuffer(data)
+	decoder := labgob.NewDecoder(buffer)
+
+	var term int
+	var votedFor int
+	var log []LogEntry
+
+	if err := decoder.Decode(&term); err != nil ||
+		decoder.Decode(&votedFor) != nil ||
+		decoder.Decode(&log) != nil {
+		panic("readPersist: failed to decode state")
+	}
+
+	rf.currentTermID = term
+	rf.votedFor = votedFor
+	rf.raftLog = append([]LogEntry(nil), log...) // deep copy
+}
+
+// PersistBytes returns the size in bytes of the persisted Raft state.
+// how many bytes in Raft's persisted log?
+func (rf *Raft) PersistBytes() int {
+	rf.mu.Lock()
+	defer rf.mu.Unlock()
+	return rf.persister.RaftStateSize()
+}
+
+// the service says it has created a snapshot that has
+// all info up to and including index. this means the
+// service no longer needs the log through (and including)
+// that index. Raft should now trim its log as much as possible.
+func (rf *Raft) Snapshot(index int, snapshot []byte) {
+	// Your code here (3D).
+	go rf.SaveSnapshot(index, snapshot)
+}
+
+func (rf *Raft) SaveSnapshot(index int, snapshot []byte) {
+	rf.mu.Lock()
+	defer rf.mu.Unlock()
+	if rf.raftLog.FirstIndex() >= index {
+		return
+	}
+
+	if rf.lastApplied < index {
+		return
+	}
+
+	rf.shrinkLogFrom(index)
+	rf.persister.Save(rf.encodeState(), snapshot)
+}
+
+// example RequestVote RPC arguments structure.
+// field names must start with capital letters!
+type RequestVoteArgs struct {
+	// Your data here (3A, 3B).
+
+	Term         int // candidate’s term
+	CandidateId  int // candidate requesting vote
+	LastLogIndex int // index of candidate’s last log entry
+	LastLogTerm  int // term of candidate’s last log entry
+}
+
+
+// example RequestVote RPC reply structure.
+// field names must start with capital letters!
+type RequestVoteReply struct {
+	// Your data here (3A).
+
+	Term        int  // currentTerm, for candidate to update itself
+	VoteGranted bool // true means candidate received vote
+}
+
+// example RequestVote RPC handler.
+func (rf *Raft) RequestVote(args *RequestVoteArgs, reply *RequestVoteReply) {
+	rf.mu.Lock()
+	defer rf.mu.Unlock()
+	reply.Term = rf.currentTermID
+
+	if args.Term < rf.currentTermID {
+		reply.VoteGranted = false
+		return
+	}
+
+	if args.Term > rf.currentTermID {
+		rf.becomeFollower(args.Term)
+	}
+
+	if rf.currentTermID == args.Term && (rf.votedFor == -1 || rf.votedFor == args.CandidateId) && rf.isCandidateLogUpToDate(args) {
+		reply.VoteGranted = true
+		rf.votedFor = args.CandidateId
+		rf.persist()
+		rf.resetElectionTimer()
+	} else {
+		reply.VoteGranted = false
+	}
+}
+
+// example code to send a RequestVote RPC to a server.
+// server is the index of the target server in rf.peers[].
+// expects RPC arguments in args.
+// fills in *reply with RPC reply, so caller should
+// pass &reply.
+// the types of the args and reply passed to Call() must be
+// the same as the types of the arguments declared in the
+// handler function (including whether they are pointers).
+//
+// The labrpc package simulates a lossy network, in which servers
+// may be unreachable, and in which requests and replies may be lost.
+// Call() sends a request and waits for a reply. If a reply arrives
+// within a timeout interval, Call() returns true; otherwise
+// Call() returns false. Thus Call() may not return for a while.
+// A false return can be caused by a dead server, a live server that
+// can't be reached, a lost request, or a lost reply.
+//
+// Call() is guaranteed to return (perhaps after a delay) *except* if the
+// handler function on the server side does not return.  Thus there
+// is no need to implement your own timeouts around Call().
+//
+// look at the comments in ../labrpc/labrpc.go for more details.
+//
+// if you're having trouble getting RPC to work, check that you've
+// capitalized all field names in structs passed over RPC, and
+// that the caller passes the address of the reply struct with &, not
+// the struct itself.
+func (rf *Raft) sendRequestVote(server int, args *RequestVoteArgs, reply *RequestVoteReply) bool {
+	return rf.peers[server].Call("Raft.RequestVote", args, reply)
 }
 
 // the service using Raft (e.g. a k/v server) wants to start

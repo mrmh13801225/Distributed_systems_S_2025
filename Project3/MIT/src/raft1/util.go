@@ -5,6 +5,8 @@ import (
 	"fmt"
 	"math/rand"
 	"time"
+	"bytes"
+	"6.5840/labgob"
 )
 
 const Debug = false
@@ -12,6 +14,23 @@ func DPrintf(format string, a ...any) {
 	if Debug {
 		log.Printf(format, a...)
 	}
+}
+
+func (rf *Raft) encodeState() []byte {
+	var buffer bytes.Buffer
+	encoder := labgob.NewEncoder(&buffer)
+
+	if err := encoder.Encode(rf.currentTermID); err != nil {
+		panic("failed to encode currentTerm")
+	}
+	if err := encoder.Encode(rf.votedFor); err != nil {
+		panic("failed to encode votedFor")
+	}
+	if err := encoder.Encode(rf.raftLog); err != nil {
+		panic("failed to encode log")
+	}
+
+	return buffer.Bytes()
 }
 
 // Return the index of the log entry just before nextIndex[server]
@@ -52,3 +71,7 @@ func (rf *Raft) shrinkLogFrom(index int) {
 func (rf *Raft) renewLog(firstIndex, firstTerm int) {
 	rf.raftLog = []LogEntry{{Command: nil, Term: firstTerm, Index: firstIndex}}
 }
+
+// State related Utils:
+
+// rpc related Utils:

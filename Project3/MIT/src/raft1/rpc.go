@@ -1,80 +1,5 @@
 package raft
 
-// example RequestVote RPC arguments structure.
-// field names must start with capital letters!
-type RequestVoteArgs struct {
-	// Your data here (3A, 3B).
-
-	Term         int // candidate’s term
-	CandidateId  int // candidate requesting vote
-	LastLogIndex int // index of candidate’s last log entry
-	LastLogTerm  int // term of candidate’s last log entry
-}
-
-// example RequestVote RPC reply structure.
-// field names must start with capital letters!
-type RequestVoteReply struct {
-	// Your data here (3A).
-
-	Term        int  // currentTerm, for candidate to update itself
-	VoteGranted bool // true means candidate received vote
-}
-
-// example RequestVote RPC handler.
-// func (rf *Raft) RequestVote(args *RequestVoteArgs, reply *RequestVoteReply) {
-// 	// Your code here (3A, 3B).
-// 	rf.mu.Lock()
-// 	defer rf.mu.Unlock()
-// 	reply.Term = rf.currentTermID
-
-// 	if args.Term < rf.currentTermID {
-// 		reply.Term = rf.currentTermID
-// 		reply.VoteGranted = false
-// 		return
-// 	}
-
-// 	if args.Term == rf.currentTermID && rf.votedFor != -1 && rf.votedFor != args.CandidateId {
-// 		reply.VoteGranted = false
-// 		return
-// 	}
-
-// 	if args.Term > rf.currentTermID {
-// 		rf.becomeFollower(args.Term)
-// 	}
-
-// 	if rf.isCandidateLogUpToDate(args) {
-// 		reply.VoteGranted = true
-// 		rf.votedFor = args.CandidateId
-// 		rf.persist()
-// 		rf.resetElectionTimer()
-// 	} else {
-// 		reply.VoteGranted = false
-// 	}
-// }
-func (rf *Raft) RequestVote(args *RequestVoteArgs, reply *RequestVoteReply) {
-	rf.mu.Lock()
-	defer rf.mu.Unlock()
-	reply.Term = rf.currentTermID
-
-	if args.Term < rf.currentTermID {
-		reply.VoteGranted = false
-		return
-	}
-
-	if args.Term > rf.currentTermID {
-		rf.becomeFollower(args.Term)
-	}
-
-	if rf.currentTermID == args.Term && (rf.votedFor == -1 || rf.votedFor == args.CandidateId) && rf.isCandidateLogUpToDate(args) {
-		reply.VoteGranted = true
-		rf.votedFor = args.CandidateId
-		rf.persist()
-		rf.resetElectionTimer()
-	} else {
-		reply.VoteGranted = false
-	}
-}
-
 func (rf *Raft) isCandidateLogUpToDate(args *RequestVoteArgs) bool {
 	if rf.raftLog.LastTerm() != args.LastLogTerm {
 		return args.LastLogTerm > rf.raftLog.LastTerm()
@@ -259,10 +184,6 @@ func (rf *Raft) genInstallSnapshotArgs() *InstallSnapshotArgs {
 		LastIncludedTerm:  rf.raftLog.FirstTerm(),
 		Data:              rf.persister.ReadSnapshot(),
 	}
-}
-
-func (rf *Raft) sendRequestVote(server int, args *RequestVoteArgs, reply *RequestVoteReply) bool {
-	return rf.peers[server].Call("Raft.RequestVote", args, reply)
 }
 
 func (rf *Raft) sendInstallSnapshot(server int, args *InstallSnapshotArgs, reply *InstallSnapshotReply) bool {

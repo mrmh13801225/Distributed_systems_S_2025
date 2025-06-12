@@ -34,6 +34,15 @@ type ApplierMetrics struct {
 	errors           int64
 }
 
+// AppenderMetrics tracks appender performance per server
+type AppenderMetrics struct {
+	totalSent      int64
+	successCount   int64
+	conflictCount  int64
+	snapshotsSent  int64
+	errors         int64
+}
+
 // A Go object implementing a single Raft peer.
 type Raft struct {
 	mu        sync.RWMutex        // Lock to protect shared access to this peer's state
@@ -62,6 +71,7 @@ type Raft struct {
 	heartbeatTimer *time.Timer
 	shutdownCh chan int
 	applierMetrics ApplierMetrics
+	appenderMetrics []AppenderMetrics
 }
 
 // return currentTerm and whether this server
@@ -339,6 +349,7 @@ func Make(peers []*labrpc.ClientEnd, me int,
 	lastIndex := rf.logStore.LastIndex() + 1
 	rf.nextIndex = make([]int, len(peers))
 	rf.matchIndex = make([]int, len(peers))
+	rf.appenderMetrics = make([]AppenderMetrics, len(peers))
 	for i := range peers {
 		rf.nextIndex[i] = lastIndex
 		rf.matchIndex[i] = 0

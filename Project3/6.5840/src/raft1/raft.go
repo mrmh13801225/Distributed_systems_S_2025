@@ -27,6 +27,13 @@ const (
 	Leader
 )
 
+// ApplierMetrics tracks applier performance
+type ApplierMetrics struct {
+	entriesApplied   int64
+	snapshotsApplied int64
+	errors           int64
+}
+
 // A Go object implementing a single Raft peer.
 type Raft struct {
 	mu        sync.RWMutex        // Lock to protect shared access to this peer's state
@@ -54,6 +61,7 @@ type Raft struct {
 	electionTimer  *time.Timer
 	heartbeatTimer *time.Timer
 	shutdownCh chan int
+	applierMetrics ApplierMetrics
 }
 
 // return currentTerm and whether this server

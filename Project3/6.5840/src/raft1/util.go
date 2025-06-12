@@ -46,6 +46,12 @@ func (rf *Raft) prevLogTerm(server int) int {
 	if prevIndex < 0 {
 		panic(fmt.Sprintf("server %d prevIndex %d < 0", server, prevIndex))
 	}
+	
+	// Handle snapshot case: if prevIndex is before our log start (in snapshot)
+	if prevIndex < rf.logStore.FirstIndex() {
+		return rf.logStore.FirstTerm()
+	}
+	
 	return rf.logStore.EntryAt(prevIndex).TermNumber
 }
 

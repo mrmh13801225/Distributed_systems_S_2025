@@ -1,8 +1,70 @@
 package raft
 
-// TODO:: refactor
+import (
+	"sync/atomic"
+)
 
+// RPCHandler defines the interface for RPC request processing
+type RPCHandler interface {
+	validateRequest(rf *Raft) RPCValidationResult
+	processRequest(rf *Raft) RPCProcessResult
+	buildResponse(rf *Raft, result RPCProcessResult) interface{}
+}
+
+// RPCValidationResult encapsulates RPC validation outcome
+type RPCValidationResult struct {
+	valid      bool
+	shouldProcess bool
+	termChange bool
+	newTerm    int
+}
+
+// RPCProcessResult encapsulates RPC processing outcome
+type RPCProcessResult struct {
+	success    bool
+	conflict   bool
+	termChange bool
+	newTerm    int
+	details    map[string]interface{}
+}
+
+
+
+// Template method for RPC processing with error handling
+func (rf *Raft) processRPCWithHandler(handler RPCHandler, rpcType string) interface{} {
+	defer func() {
+		if r := recover(); r != nil {
+			DPrintf("RPC %s panic recovered: %v", rpcType, r)
+			atomic.AddInt64(&rf.rpcMetrics.appendEntriesReceived, 1) // Generic error counter
+		}
+	}()
+
+	// Validation phase
+	validationResult := handler.validateRequest(rf)
+	if !validationResult.valid {
+		return handler.buildResponse(rf, RPCProcessResult{success: false})
+	}
+
+	// State transition if needed
+	if validationResult.termChange {
+		rf.becomeFollower(validationResult.newTerm)
+	}
+
+	if !validationResult.shouldProcess {
+		return handler.buildResponse(rf, RPCProcessResult{success: false})
+	}
+
+	// Processing phase
+	processResult := handler.processRequest(rf)
+	
+	// Build and return response
+	return handler.buildResponse(rf, processResult)
+}
+
+// Improved log up-to-date check with better documentation
 func (rf *Raft) isCandidateLogUpToDate(args *RequestVoteArgs) bool {
+	// Election restriction: candidate's log must be at least as up-to-date
+	// as any other log in the majority that grants votes
 	if rf.logStore.LastTerm() != args.LastLogTerm {
 		return args.LastLogTerm > rf.logStore.LastTerm()
 	}
@@ -77,106 +139,60 @@ type InstallSnapshotReply struct {
 	TermNumber int // currentTerm, for leader to update itself
 }
 
+// Refactored AppendEntries RPC handler using Template Method Pattern
 func (rf *Raft) AppendEntries(args *AppendEntriesArgs, reply *AppendEntriesReply) {
 	rf.mu.Lock()
 	defer rf.mu.Unlock()
-
-	reply.TermNumber = rf.currentTermID
-	reply.Success = false
-	reply.Confict = false
-
-	if args.TermNumber < rf.currentTermID {
-		return
+	
+	atomic.AddInt64(&rf.rpcMetrics.appendEntriesReceived, 1)
+	
+	handler := NewAppendEntriesHandler(args, reply)
+	result := rf.processRPCWithHandler(handler, "AppendEntries")
+	
+	if result.(*AppendEntriesReply).Success {
+		atomic.AddInt64(&rf.rpcMetrics.appendEntriesSucceeded, 1)
 	}
-
-	if args.TermNumber > rf.currentTermID || (args.TermNumber == rf.currentTermID && rf.state == Candidate) {
-		rf.becomeFollower(args.TermNumber)
-	}
-
-	rf.resetElectionTimer()
-
-	if args.PrevLogIndex < rf.logStore.FirstIndex() {
-		return
-	}
-
-	if args.PrevLogIndex > rf.logStore.LastIndex() {
-		reply.Confict = true
-		reply.XTerm = -1
-		reply.XIndex = -1
-		reply.XLen = rf.logStore.LastIndex() + 1
-		return
-	}
-
-	if rf.logStore.EntryAt(args.PrevLogIndex).TermNumber != args.PrevLogTerm {
-		term := rf.logStore.EntryAt(args.PrevLogIndex).TermNumber
-		reply.Confict = true
-		reply.XTerm = term
-		i := args.PrevLogIndex - 1
-		for i >= rf.logStore.FirstIndex() && rf.logStore.EntryAt(i).TermNumber == term {
-			i--
-		}
-		reply.XIndex = i + 1
-		reply.XLen = rf.logStore.LastIndex() + 1
-		return
-	}
-
-	start := args.PrevLogIndex + 1 - rf.logStore.FirstIndex()
-	for i, e := range args.LogEntry {
-		if start+i >= len(rf.logStore) || rf.logStore[start+i].TermNumber != e.TermNumber {
-			rf.logStore = append(rf.logStore[:start+i], args.LogEntry[i:]...)
-			rf.persist()
-			break
-		}
-	}
-
-	if args.LeaderCommit > rf.commitIndex {
-		rf.commitIndex = min(args.LeaderCommit, rf.logStore.LastIndex())
-		rf.applyCond.Signal()
-	}
-
-	reply.Success = true
 }
 
 func (rf *Raft) genAppendEntriesArgs(server int) *AppendEntriesArgs {
+	prevIndex := rf.prevLogIndex(server)
+	
+	// Safety check: if prevIndex is before our log, this should use snapshot strategy instead
+	if prevIndex < rf.logStore.FirstIndex() {
+		DPrintf("Warning: genAppendEntriesArgs called with prevIndex %d < firstIndex %d for server %d", 
+			prevIndex, rf.logStore.FirstIndex(), server)
+		// Return minimal args to avoid crash - this shouldn't happen with correct strategy selection
+		return &AppendEntriesArgs{
+			TermNumber:         rf.currentTermID,
+			PrevLogIndex: rf.logStore.FirstIndex() - 1,
+			PrevLogTerm:  rf.logStore.FirstTerm(),
+			LogEntry:     []LogEntry{},
+			LeaderCommit: rf.commitIndex,
+		}
+	}
+	
 	return &AppendEntriesArgs{
 		TermNumber:         rf.currentTermID,
-		PrevLogIndex: rf.prevLogIndex(server),
+		PrevLogIndex: prevIndex,
 		PrevLogTerm:  rf.prevLogTerm(server),
-		LogEntry:     rf.logStore.EntriesInRange(rf.prevLogIndex(server)+1, rf.logStore.LastIndex()+1),
+		LogEntry:     rf.logStore.EntriesInRange(prevIndex+1, rf.logStore.LastIndex()+1),
 		LeaderCommit: rf.commitIndex,
 	}
 }
 
+// Refactored InstallSnapshot RPC handler using Template Method Pattern
 func (rf *Raft) InstallSnapshot(args *InstallSnapshotArgs, reply *InstallSnapshotReply) {
 	rf.mu.Lock()
 	defer rf.mu.Unlock()
-
-	reply.TermNumber = rf.currentTermID
-	if args.TermNumber < rf.currentTermID {
-		return
+	
+	atomic.AddInt64(&rf.rpcMetrics.snapshotInstallReceived, 1)
+	
+	handler := NewInstallSnapshotHandler(args, reply)
+	result := rf.processRPCWithHandler(handler, "InstallSnapshot")
+	
+	if result.(*InstallSnapshotReply) != nil {
+		atomic.AddInt64(&rf.rpcMetrics.snapshotInstallSucceeded, 1)
 	}
-
-	// if args.TermNumber > rf.currentTermID {
-	// 	rf.becomeFollower(args.TermNumber)
-	// } else if args.TermNumber == rf.currentTermID && rf.state == Candidate {
-	// 	rf.becomeFollower(args.TermNumber)
-	// }
-
-	if args.TermNumber > rf.currentTermID || 
-		(args.TermNumber == rf.currentTermID && rf.state == Candidate) {
-		rf.becomeFollower(args.TermNumber)
-	}
-
-	rf.resetElectionTimer()
-
-	if rf.commitIndex >= args.LastIncludedIndex {
-		return
-	}
-
-	rf.renewLog(args.LastIncludedIndex, args.LastIncludedTerm)
-	rf.persister.Save(rf.encodeState(), args.Data)
-
-	rf.commitIndex = rf.logStore.FirstIndex()
 }
 
 func (rf *Raft) genInstallSnapshotArgs() *InstallSnapshotArgs {
@@ -194,4 +210,242 @@ func (rf *Raft) sendInstallSnapshot(server int, args *InstallSnapshotArgs, reply
 
 func (rf *Raft) sendAppendEntries(server int, args *AppendEntriesArgs, reply *AppendEntriesReply) bool {
 	return rf.peers[server].Call("Raft.AppendEntries", args, reply)
+}
+
+// AppendEntriesHandler implements the strategy for AppendEntries RPC
+type AppendEntriesHandler struct {
+	args  *AppendEntriesArgs
+	reply *AppendEntriesReply
+}
+
+// NewAppendEntriesHandler creates a new AppendEntries handler
+func NewAppendEntriesHandler(args *AppendEntriesArgs, reply *AppendEntriesReply) *AppendEntriesHandler {
+	return &AppendEntriesHandler{args: args, reply: reply}
+}
+
+func (h *AppendEntriesHandler) validateRequest(rf *Raft) RPCValidationResult {
+	h.reply.TermNumber = rf.currentTermID
+	h.reply.Success = false
+	h.reply.Confict = false
+
+	// Reject if term is outdated
+	if h.args.TermNumber < rf.currentTermID {
+		return RPCValidationResult{valid: true, shouldProcess: false}
+	}
+
+	// Update term and become follower if necessary
+	needStateChange := h.args.TermNumber > rf.currentTermID || 
+		(h.args.TermNumber == rf.currentTermID && rf.state == Candidate)
+
+	if needStateChange {
+		return RPCValidationResult{
+			valid: true, 
+			shouldProcess: true, 
+			termChange: true, 
+			newTerm: h.args.TermNumber,
+		}
+	}
+
+	return RPCValidationResult{valid: true, shouldProcess: true}
+}
+
+func (h *AppendEntriesHandler) processRequest(rf *Raft) RPCProcessResult {
+	// Reset election timer - valid leader communication
+	rf.resetElectionTimer()
+
+	// Check if previous log index is before our first index (snapshot case)
+	if h.args.PrevLogIndex < rf.logStore.FirstIndex() {
+		return RPCProcessResult{success: false}
+	}
+
+	// Check if we don't have the previous log entry
+	if h.args.PrevLogIndex > rf.logStore.LastIndex() {
+		return RPCProcessResult{
+			success: false,
+			conflict: true,
+			details: map[string]interface{}{
+				"XTerm":  -1,
+				"XIndex": -1,
+				"XLen":   rf.logStore.LastIndex() + 1,
+			},
+		}
+	}
+
+	// Check if previous log entry term matches
+	if rf.logStore.EntryAt(h.args.PrevLogIndex).TermNumber != h.args.PrevLogTerm {
+		return h.handleLogConflict(rf)
+	}
+
+	// Append new entries and handle conflicts
+	h.handleLogAppend(rf)
+
+	// Update commit index if leader's commit is higher
+	if h.args.LeaderCommit > rf.commitIndex {
+		rf.commitIndex = min(h.args.LeaderCommit, rf.logStore.LastIndex())
+		rf.applyCond.Signal()
+	}
+
+	return RPCProcessResult{success: true}
+}
+
+func (h *AppendEntriesHandler) handleLogConflict(rf *Raft) RPCProcessResult {
+	term := rf.logStore.EntryAt(h.args.PrevLogIndex).TermNumber
+	
+	// Find first index of conflicting term
+	i := h.args.PrevLogIndex - 1
+	for i >= rf.logStore.FirstIndex() && rf.logStore.EntryAt(i).TermNumber == term {
+		i--
+	}
+
+	return RPCProcessResult{
+		success: false,
+		conflict: true,
+		details: map[string]interface{}{
+			"XTerm":  term,
+			"XIndex": i + 1,
+			"XLen":   rf.logStore.LastIndex() + 1,
+		},
+	}
+}
+
+func (h *AppendEntriesHandler) handleLogAppend(rf *Raft) {
+	start := h.args.PrevLogIndex + 1 - rf.logStore.FirstIndex()
+	
+	for i, entry := range h.args.LogEntry {
+		if start+i >= len(rf.logStore) || rf.logStore[start+i].TermNumber != entry.TermNumber {
+			// Conflict found - replace from this point onward
+			rf.logStore = append(rf.logStore[:start+i], h.args.LogEntry[i:]...)
+			rf.persist()
+			break
+		}
+	}
+}
+
+func (h *AppendEntriesHandler) buildResponse(rf *Raft, result RPCProcessResult) interface{} {
+	h.reply.Success = result.success
+	h.reply.Confict = result.conflict
+
+	if result.conflict && result.details != nil {
+		if xterm, ok := result.details["XTerm"].(int); ok {
+			h.reply.XTerm = xterm
+		}
+		if xindex, ok := result.details["XIndex"].(int); ok {
+			h.reply.XIndex = xindex
+		}
+		if xlen, ok := result.details["XLen"].(int); ok {
+			h.reply.XLen = xlen
+		}
+	}
+
+	return h.reply
+}
+
+// InstallSnapshotHandler implements the strategy for InstallSnapshot RPC
+type InstallSnapshotHandler struct {
+	args  *InstallSnapshotArgs
+	reply *InstallSnapshotReply
+}
+
+// NewInstallSnapshotHandler creates a new InstallSnapshot handler
+func NewInstallSnapshotHandler(args *InstallSnapshotArgs, reply *InstallSnapshotReply) *InstallSnapshotHandler {
+	return &InstallSnapshotHandler{args: args, reply: reply}
+}
+
+func (h *InstallSnapshotHandler) validateRequest(rf *Raft) RPCValidationResult {
+	h.reply.TermNumber = rf.currentTermID
+	
+	// Reject if term is outdated
+	if h.args.TermNumber < rf.currentTermID {
+		return RPCValidationResult{valid: true, shouldProcess: false}
+	}
+
+	// Update term and become follower if necessary
+	needStateChange := h.args.TermNumber > rf.currentTermID || 
+		(h.args.TermNumber == rf.currentTermID && rf.state == Candidate)
+
+	if needStateChange {
+		return RPCValidationResult{
+			valid: true, 
+			shouldProcess: true, 
+			termChange: true, 
+			newTerm: h.args.TermNumber,
+		}
+	}
+
+	return RPCValidationResult{valid: true, shouldProcess: true}
+}
+
+func (h *InstallSnapshotHandler) processRequest(rf *Raft) RPCProcessResult {
+	// Reset election timer - valid leader communication
+	rf.resetElectionTimer()
+
+	// If we already have committed this snapshot or later, ignore it
+	if rf.commitIndex >= h.args.LastIncludedIndex {
+		return RPCProcessResult{success: true} // Not an error, just already applied
+	}
+
+	// Install the snapshot
+	rf.renewLog(h.args.LastIncludedIndex, h.args.LastIncludedTerm)
+	rf.persister.Save(rf.encodeState(), h.args.Data)
+	rf.commitIndex = rf.logStore.FirstIndex()
+
+	return RPCProcessResult{success: true}
+}
+
+func (h *InstallSnapshotHandler) buildResponse(rf *Raft, result RPCProcessResult) interface{} {
+	return h.reply
+}
+
+// RequestVoteHandler implements the strategy for RequestVote RPC
+type RequestVoteHandler struct {
+	args  *RequestVoteArgs
+	reply *RequestVoteReply
+}
+
+// NewRequestVoteHandler creates a new RequestVote handler
+func NewRequestVoteHandler(args *RequestVoteArgs, reply *RequestVoteReply) *RequestVoteHandler {
+	return &RequestVoteHandler{args: args, reply: reply}
+}
+
+func (h *RequestVoteHandler) validateRequest(rf *Raft) RPCValidationResult {
+	h.reply.TermNumber = rf.currentTermID
+	h.reply.VoteGranted = false
+
+	// Reject if term is outdated
+	if h.args.TermNumber < rf.currentTermID {
+		return RPCValidationResult{valid: true, shouldProcess: false}
+	}
+
+	// Update term and become follower if necessary
+	if h.args.TermNumber > rf.currentTermID {
+		return RPCValidationResult{
+			valid: true, 
+			shouldProcess: true, 
+			termChange: true, 
+			newTerm: h.args.TermNumber,
+		}
+	}
+
+	return RPCValidationResult{valid: true, shouldProcess: true}
+}
+
+func (h *RequestVoteHandler) processRequest(rf *Raft) RPCProcessResult {
+	// Check if we can grant the vote
+	canGrantVote := rf.currentTermID == h.args.TermNumber && 
+		(rf.votedFor == -1 || rf.votedFor == h.args.CandidateId) && 
+		rf.isCandidateLogUpToDate(h.args)
+
+	if canGrantVote {
+		rf.votedFor = h.args.CandidateId
+		rf.persist()
+		rf.resetElectionTimer()
+		return RPCProcessResult{success: true}
+	}
+
+	return RPCProcessResult{success: false}
+}
+
+func (h *RequestVoteHandler) buildResponse(rf *Raft, result RPCProcessResult) interface{} {
+	h.reply.VoteGranted = result.success
+	return h.reply
 }

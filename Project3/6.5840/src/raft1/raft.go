@@ -43,6 +43,16 @@ type AppenderMetrics struct {
 	errors         int64
 }
 
+// RPCMetrics tracks RPC performance
+type RPCMetrics struct {
+	appendEntriesReceived  int64
+	appendEntriesSucceeded int64
+	snapshotInstallReceived int64
+	snapshotInstallSucceeded int64
+	requestVoteReceived    int64
+	requestVoteGranted     int64
+}
+
 // A Go object implementing a single Raft peer.
 type Raft struct {
 	mu        sync.RWMutex        // Lock to protect shared access to this peer's state
@@ -72,6 +82,7 @@ type Raft struct {
 	shutdownCh chan int
 	applierMetrics ApplierMetrics
 	appenderMetrics []AppenderMetrics
+	rpcMetrics RPCMetrics
 }
 
 // return currentTerm and whether this server
@@ -179,28 +190,18 @@ type RequestVoteReply struct {
 	VoteGranted bool // true means candidate received vote
 }
 
-// example RequestVote RPC handler.
+// Refactored RequestVote RPC handler using Template Method Pattern
 func (rf *Raft) RequestVote(args *RequestVoteArgs, reply *RequestVoteReply) {
 	rf.mu.Lock()
 	defer rf.mu.Unlock()
-	reply.TermNumber = rf.currentTermID
-
-	if args.TermNumber < rf.currentTermID {
-		reply.VoteGranted = false
-		return
-	}
-
-	if args.TermNumber > rf.currentTermID {
-		rf.becomeFollower(args.TermNumber)
-	}
-
-	if rf.currentTermID == args.TermNumber && (rf.votedFor == -1 || rf.votedFor == args.CandidateId) && rf.isCandidateLogUpToDate(args) {
-		reply.VoteGranted = true
-		rf.votedFor = args.CandidateId
-		rf.persist()
-		rf.resetElectionTimer()
-	} else {
-		reply.VoteGranted = false
+	
+	atomic.AddInt64(&rf.rpcMetrics.requestVoteReceived, 1)
+	
+	handler := NewRequestVoteHandler(args, reply)
+	result := rf.processRPCWithHandler(handler, "RequestVote")
+	
+	if result.(*RequestVoteReply).VoteGranted {
+		atomic.AddInt64(&rf.rpcMetrics.requestVoteGranted, 1)
 	}
 }
 

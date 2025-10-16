@@ -5,14 +5,12 @@ import (
 	"time"
 )
 
-// AppendStrategy defines the interface for different append operations
 type AppendStrategy interface {
 	shouldSend(rf *Raft, server int) bool
 	executeAppend(rf *Raft, server int) AppendResult
 	getName() string
 }
 
-// AppendResult encapsulates the result of an append operation
 type AppendResult struct {
 	success    bool
 	termChange bool
@@ -21,13 +19,10 @@ type AppendResult struct {
 	reply      interface{}
 }
 
-// LogAppendStrategy handles normal log entry replication
 type LogAppendStrategy struct{}
 
-// SnapshotAppendStrategy handles snapshot installation
 type SnapshotAppendStrategy struct{}
 
-// Main appender goroutine - Template Method Pattern with improved error handling
 func (rf *Raft) appender(server int) {
 	defer func() {
 		if r := recover(); r != nil {
@@ -41,20 +36,16 @@ func (rf *Raft) appender(server int) {
 	defer lock.Unlock()
 
 	for !rf.killed() {
-		// Wait for work - Producer-Consumer Pattern
 		for !rf.shouldAppend(server) {
 			rf.appendConds[server].Wait()
 		}
 		
-		// Execute append with proper error handling
 		rf.executeAppendWithStrategy(server)
 		
-		// Adaptive sleep based on success/failure
 		time.Sleep(10 * time.Millisecond)
 	}
 }
 
-// Template method for executing append operations
 func (rf *Raft) executeAppendWithStrategy(server int) {
 	strategy := rf.selectAppendStrategy(server)
 	
@@ -64,7 +55,6 @@ func (rf *Raft) executeAppendWithStrategy(server int) {
 	}
 }
 
-// Factory method to select appropriate append strategy
 func (rf *Raft) selectAppendStrategy(server int) AppendStrategy {
 	rf.mu.RLock()
 	defer rf.mu.RUnlock()
@@ -75,7 +65,6 @@ func (rf *Raft) selectAppendStrategy(server int) AppendStrategy {
 	return &LogAppendStrategy{}
 }
 
-// Handle append result with proper state management
 func (rf *Raft) handleAppendResult(server int, result AppendResult) {
 	if result.termChange {
 		rf.mu.Lock()
@@ -98,7 +87,6 @@ func (rf *Raft) shouldAppend(server int) bool {
 	return rf.state == Leader && rf.nextIndex[server] <= rf.logStore.LastIndex()
 }
 
-// LogAppendStrategy implementation
 func (s *LogAppendStrategy) shouldSend(rf *Raft, server int) bool {
 	rf.mu.RLock()
 	defer rf.mu.RUnlock()
@@ -153,7 +141,6 @@ func (s *LogAppendStrategy) getName() string {
 	return "LogAppend"
 }
 
-// SnapshotAppendStrategy implementation
 func (s *SnapshotAppendStrategy) shouldSend(rf *Raft, server int) bool {
 	rf.mu.RLock()
 	defer rf.mu.RUnlock()
@@ -225,14 +212,13 @@ func (rf *Raft) sendSnapshotTo(server int) {
 	rf.handleAppendResult(server, result)
 }
 
-// Legacy wrapper methods for backward compatibility
 func (rf *Raft) sendAppendEntriesTo(server int) {
 	strategy := &LogAppendStrategy{}
 	result := strategy.executeAppend(rf, server)
 	rf.handleAppendResult(server, result)
 }
 
-// Improved conflict resolution with better error handling
+
 func (rf *Raft) updateNextIndexAfterConflict(server int, reply *AppendEntriesReply) {
 	// Handle case where follower's log is too short
 	if reply.XTerm == -1 && reply.XIndex == -1 {
@@ -240,7 +226,6 @@ func (rf *Raft) updateNextIndexAfterConflict(server int, reply *AppendEntriesRep
 		return
 	}
 
-	// Search backwards for the conflicting term
 	for i := min(rf.prevLogIndex(server), rf.logStore.LastIndex()); i >= rf.logStore.FirstIndex(); i-- {
 		if rf.logStore.EntryAt(i).TermNumber == reply.XTerm {
 			rf.nextIndex[server] = i + 1
@@ -250,11 +235,10 @@ func (rf *Raft) updateNextIndexAfterConflict(server int, reply *AppendEntriesRep
 		}
 	}
 
-	// Fallback: use the index provided by follower
 	rf.nextIndex[server] = max(min(reply.XIndex, rf.logStore.LastIndex()+1), rf.logStore.FirstIndex())
 }
 
-// Improved heartbeat broadcast with better resource management
+
 func (rf *Raft) broadcastHeartBeat() {
 	if rf.state != Leader {
 		return
@@ -262,7 +246,6 @@ func (rf *Raft) broadcastHeartBeat() {
 
 	for server := range rf.peers {
 		if server != rf.me {
-			// Keep the original behavior of creating goroutines for immediate sending
 			go rf.doAppendJob(server)
 		}
 	}
